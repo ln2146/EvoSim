@@ -1,0 +1,64 @@
+{
+    "num_users": 3,
+    "num_time_steps": 10,
+    "agent_config_generation": "file",
+    "agent_config_path": "separate",
+    "max_total_posts": 10000,
+    "max_total_users": 10,
+    "separate_personas": {
+        "neutral_file": "personas/neutral_personas_database.json"
+    },
+    "temperature": 0.9,
+    "reset_db": true,
+    "initial_follow_probability": 0.1,
+    "new_users": {
+        "add_probability": 1.0,
+        "follow_probability": 0.2,
+        "users_per_step": 0,
+        "start_step": 1
+    },
+    "news_injection": {
+        "start_step": 0,
+        "articles_per_injection": 10
+    },
+    "moderation": {
+        "content_moderation": false,
+        "flag_threshold": 5,
+        "note_threshold": 3
+    },
+    "feed": {
+        "total_news_posts": 8
+    },
+    "generate_own_post": true,
+    "experiment": {
+        "type": "no_fact_checking",
+        "settings": {
+            "posts_per_step": 10,
+            "fact_checker_temperature": 0.3,
+            "include_reasoning": false,
+            "start_delay_minutes": 0,
+            "fact_checking_enabled": true
+        }
+    },
+    "opinion_balance_system": {
+        "enabled": false,
+        "monitoring_enabled": false,
+        "intervention_threshold": 1,
+        "feedback_system_enabled": true,
+        "trending_posts_scan_interval": 3,
+        "feedback_monitoring_interval": 1,
+        "feedback_monitoring_cycles": 2,
+        "standalone_mode": true
+    },
+    "malicious_bot_system": {
+        "enabled": false,
+        "cluster_size": 15,
+        "attack_probability": 1.0,
+        "target_post_types": [
+            "user_post"
+        ]
+    },
+    "prebunking_system": {
+        "enabled": false
+    }
+}
