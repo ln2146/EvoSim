@@ -60,5 +60,58 @@
     },
     "prebunking_system": {
         "enabled": false
+    },
+    "recommender": {
+        "enabled": true,
+        "scoring": {
+            "w_likes": 1.0,
+            "w_shares": 2.0,
+            "w_comments": 1.0
+        },
+        "freshness": {
+            "decay_rate": 0.1,
+            "min_freshness": 0.1,
+            "bias": 180
+        },
+        "diversity": {
+            "enabled": true,
+            "penalty_factor": 0.7,
+            "max_same_author": 3
+        },
+        "embedding": {
+            "enabled": true,
+            "model_name": "paraphrase-MiniLM-L6-v2",
+            "cache_embeddings": true,
+            "embedding_weight": 0.3,
+            "max_cache_size": 10000
+        },
+        "source": {
+            "in_network_ratio": 0.5,
+            "out_network_ratio": 0.5,
+            "max_candidates_per_source": 100
+        },
+        "oon": {
+            "enabled": true,
+            "boost_factor": 1.0,
+            "high_engagement_threshold": 50
+        },
+        "filter": {
+            "filter_taken_down": true,
+            "filter_blocked_authors": true,
+            "filter_self_posts": true,
+            "filter_seen_posts": false,
+            "min_content_length": 0
+        },
+        "selection": {
+            "news_top_k": 10,
+            "news_pick_n": 5,
+            "news_secondary_offset": 10,
+            "news_secondary_top_k": 10,
+            "news_secondary_pick_n": 3,
+            "negative_news_pick_n": 1,
+            "non_news_top_k": 10,
+            "non_news_pick_n": 2,
+            "include_ties": true
+        }
     }
 }
