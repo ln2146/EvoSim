@@ -204,7 +204,7 @@ class EmbeddingManager:
         """
         self._ensure_initialized()
 
-        if not self._model:
+        if not self.is_available:
             return 0
 
         count = 0

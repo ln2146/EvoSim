@@ -55,7 +55,7 @@ class MultiModelSelector:
         "experiment": DEFAULT_POOL,
         "interview": DEFAULT_POOL,
         "comment_diversity": DEFAULT_POOL,
-        # Embedding role (client only; embedding model is supplied by caller)
+        # Embedding role 
         "embedding": [EMBEDDING_MODEL],
     }
 
