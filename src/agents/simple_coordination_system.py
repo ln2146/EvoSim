@@ -3669,6 +3669,19 @@ CRITICAL REQUIREMENTS
             return ""
 
 
+# Import role enhancement patch for automatic defense role integration
+try:
+    from .role_enhancement_patch import (
+        calculate_context_parameters,
+        enhanced_assign_roles_to_agents,
+        enhanced_generate_fallback_instruction,
+        integrate_with_coordination_system
+    )
+    _ROLE_ENHANCEMENT_AVAILABLE = True
+except ImportError:
+    _ROLE_ENHANCEMENT_AVAILABLE = False
+
+
 class SimpleCoordinationSystem:
     """Simplified agent coordination system - supports auto trigger."""
     
@@ -4278,6 +4291,14 @@ class SimpleCoordinationSystem:
 
     def _assign_roles_to_agents(self, agents: List, role_distribution: Dict[str, int]) -> List:
         """Assign roles to agents - simplified version, fix type comparison errors."""
+        # Try to use enhanced role assignment with defense roles
+        if _ROLE_ENHANCEMENT_AVAILABLE and role_distribution:
+            try:
+                context_params = calculate_context_parameters(role_distribution)
+                return enhanced_assign_roles_to_agents(agents, role_distribution, context_params)
+            except Exception as e:
+                workflow_logger.warning(f"  ⚠️ Enhanced role assignment failed, using fallback: {e}")
+        
         if not role_distribution:
             # If no role distribution, all agents use general role
             for i, agent in enumerate(agents):
