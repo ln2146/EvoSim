@@ -42,6 +42,17 @@ aftercare_enabled: bool = True
 auto_status: Optional[bool] = False
 
 
+# Whether moderation system (content review & intervention) is enabled.
+# True  -> enable moderation system (visibility degradation, warning labels, takedowns)
+# False -> completely disable moderation system
+#
+# The moderation system maintains ecological boundaries through:
+# - Visibility degradation: reducing weight in recommendation algorithm
+# - Warning labels: marking content with official warnings
+# - Hard takedowns: removing posts and banning users
+moderation_enabled: bool = False
+
+
 def as_dict() -> Dict[str, Optional[bool]]:
     """Return current flag values as a simple dict for APIs."""
 
@@ -49,4 +60,5 @@ def as_dict() -> Dict[str, Optional[bool]]:
         "attack_enabled": attack_enabled,
         "aftercare_enabled": aftercare_enabled,
         "auto_status": auto_status,
+        "moderation_enabled": moderation_enabled,
     }
