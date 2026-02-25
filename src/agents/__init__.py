@@ -83,6 +83,23 @@ try:
 except ImportError:
     _ROLE_ENHANCEMENT_AVAILABLE = False
 
+# Defense agent prompts (specialized prompts for each defense role)
+try:
+    from .defense_agent_prompts import (
+        DefenseAgentRole,
+        EmpathPrompts,
+        FactCheckerPrompts,
+        AmplifierPrompts,
+        NicheFillerPrompts,
+        DefensePromptManager,
+        get_empath_system_prompt,
+        get_fact_checker_system_prompt,
+        get_amplifier_system_prompt,
+        get_niche_filler_system_prompt
+    )
+except ImportError:
+    pass
+
 # Version info
 __version__ = "1.0.0"
 __author__ = "MOSAIC Team"
@@ -135,5 +152,17 @@ __all__ = [
     "enhanced_assign_roles_to_agents",
     "enhanced_generate_fallback_instruction",
     "integrate_with_coordination_system",
-    "_ROLE_ENHANCEMENT_AVAILABLE"
+    "_ROLE_ENHANCEMENT_AVAILABLE",
+    
+    # Defense prompts
+    "DefenseAgentRole",
+    "EmpathPrompts",
+    "FactCheckerPrompts",
+    "AmplifierPrompts",
+    "NicheFillerPrompts",
+    "DefensePromptManager",
+    "get_empath_system_prompt",
+    "get_fact_checker_system_prompt",
+    "get_amplifier_system_prompt",
+    "get_niche_filler_system_prompt"
 ]
