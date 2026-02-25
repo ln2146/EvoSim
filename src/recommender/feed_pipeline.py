@@ -17,6 +17,7 @@ from .query_hydrators import UserActionHydrator, UserFeaturesHydrator
 from .sources import InNetworkSource, OutNetworkSource
 from .hydrators import CoreDataHydrator, AuthorHydrator
 from .filters import PreScoringFilters, PostSelectionFilters
+from .filters.moderation_filter import ModerationFilter
 from .scorers import WeightedScorer, EmbeddingScorer, AuthorDiversityScorer, OONScorer
 from .selectors import TopKSelector
 
@@ -85,6 +86,9 @@ class FeedPipeline:
 
         # Stage 7: Post-Selection Filters
         self.post_selection_filters = PostSelectionFilters()
+
+        # Moderation Filter (applied after selection)
+        self.moderation_filter = ModerationFilter()
 
     def execute(self, request: FeedRequest) -> FeedResponse:
         """
@@ -228,6 +232,10 @@ class FeedPipeline:
     def _stage7_post_selection_filter(self, ctx: PipelineContext) -> PipelineContext:
         """阶段7: 后选择过滤"""
         ctx.candidates = self.post_selection_filters.filter(ctx.candidates)
+
+        # Apply moderation filter (if enabled)
+        ctx.candidates = self.moderation_filter.filter(ctx.candidates)
+
         return ctx
 
     def _build_response(self, ctx: PipelineContext) -> FeedResponse:
