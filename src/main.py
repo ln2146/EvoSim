@@ -24,6 +24,9 @@ from keys import OPENAI_API_KEY, OPENAI_BASE_URL
 
 import control_flags
 
+# Moderation service (initialized when needed)
+moderation_service = None
+
 # =============================
 # FastAPI control server setup
 # =============================
@@ -122,6 +125,34 @@ def get_auto_status_flag():
     """Get current opinion-balance auto monitoring/intervention status."""
 
     return {"auto_status": control_flags.auto_status}
+
+
+@control_app.post("/control/moderation")
+def set_moderation_flag(body: ToggleRequest):
+    """Enable or disable moderation system at runtime.
+
+    The moderation system maintains ecological boundaries through:
+    - Visibility degradation: reducing content weight in recommendations
+    - Warning labels: marking content with official warnings
+    - Hard takedowns: removing posts and banning users
+    """
+
+    control_flags.moderation_enabled = bool(body.enabled)
+    return {"moderation_enabled": control_flags.moderation_enabled}
+
+
+@control_app.get("/control/moderation")
+def get_moderation_status():
+    """Get current moderation system status and statistics."""
+
+    stats = {}
+    if moderation_service:
+        stats = moderation_service.get_stats().model_dump()
+
+    return {
+        "moderation_enabled": control_flags.moderation_enabled,
+        "stats": stats,
+    }
 
 
 @control_app.post("/analysis/post-comments")
