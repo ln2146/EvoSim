@@ -42,6 +42,9 @@ flask
 flask-cors
 psutil
 
+# X-Algorithm recommender dependencies
+sentence-transformers>=2.2.0
+
 # Control API server
 fastapi
 uvicorn
