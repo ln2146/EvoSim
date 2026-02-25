@@ -21,6 +21,7 @@ from .config import (
     ModerationConfig,
     ModerationProviderConfig,
     ModerationActionConfig,
+    load_config_from_env,
 )
 from .service import ModerationService
 
@@ -32,4 +33,5 @@ __all__ = [
     "ModerationProviderConfig",
     "ModerationActionConfig",
     "ModerationService",
+    "load_config_from_env",
 ]
