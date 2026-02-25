@@ -27,6 +27,10 @@ from tracked_opinion_helper import (
     preload_first_fake_news_from_dataset,
 )
 
+# Moderation system
+from moderation import ModerationService, ModerationConfig, load_config_from_env
+from keys import OPENAI_API_KEY
+
 
 class Simulation:
     """
@@ -106,7 +110,7 @@ class Simulation:
                 fact_checker_engine = self.multi_model_selector.select_random_model(role="fact_checker")
             else:
                 fact_checker_engine = self.engine
-        
+
         self.fact_checker_engine = fact_checker_engine
         self.fact_checker = FactChecker(
             checker_id="main_checker",
@@ -114,6 +118,23 @@ class Simulation:
         )
         logging.info(f"🔍 Fact-check infrastructure initialized using model: {fact_checker_engine}")
         logging.info(f"🔍 Fact-check execution controlled by control_flags.aftercare_enabled (current: {control_flags.aftercare_enabled})")
+
+        # Initialize moderation service
+        self.moderation_service = None
+        try:
+            moderation_config = load_config_from_env()
+            # Enable OpenAI provider with API key
+            if OPENAI_API_KEY and moderation_config.openai_provider:
+                moderation_config.openai_provider.api_key = OPENAI_API_KEY
+                moderation_config.openai_provider.enabled = True
+
+            # Set check_news_only=True based on user requirement
+            moderation_config.check_news_only = True
+
+            self.moderation_service = ModerationService(moderation_config)
+            logging.info(f"🛡️ Moderation service initialized (controlled by control_flags.moderation_enabled)")
+        except Exception as e:
+            logging.warning(f"Failed to initialize moderation service: {e}")
 
         # Initialize opinion balance manager (only if enabled)
         if config.get("opinion_balance_system", {}).get("enabled", False):
@@ -241,6 +262,11 @@ class Simulation:
                 logging.info(f"🔍 Time step {step + 1}: starting third-party fact check (checking news from time step {step - 2})")
                 # 始终使用 "third_party_fact_checking" 作为 experiment_type，不受 CLI 输入影响
                 await self._run_fact_checking_async(step, fact_check_limit, current_timestep=step, experiment_type="third_party_fact_checking")
+
+            # Run moderation system (content review & intervention)
+            # 完全由全局开关 control_flags.moderation_enabled 控制
+            if control_flags.moderation_enabled:
+                await self._run_moderation_async(step)
 
             # Discover the very first malicious news if not yet captured
             try:
@@ -559,6 +585,108 @@ class Simulation:
         except Exception as e:
             logging.error(f"Error during fact check for post {post.post_id}: {e}")
             raise
+
+    async def _run_moderation_async(self, step: int):
+        """
+        Run moderation system asynchronously.
+
+        Checks news posts and applies intervention actions:
+        - Visibility degradation: reduce content weight in recommendations
+        - Warning labels: mark content with official warnings
+        - Hard takedowns: remove posts and ban users
+
+        Args:
+            step: Current simulation step
+        """
+        if not self.moderation_service:
+            return
+
+        try:
+            logging.info(f"🛡️ Time step {step + 1}: starting moderation check")
+
+            # Get news posts to check (from current and previous timesteps)
+            posts_to_check = self._get_posts_for_moderation(step)
+
+            if not posts_to_check:
+                logging.info(f"🛡️ Time step {step + 1}: no news posts to moderate")
+                return
+
+            logging.info(f"🛡️ Time step {step + 1}: checking {len(posts_to_check)} news posts")
+
+            # Process moderation (can batch multiple posts)
+            verdicts = self.moderation_service.check_news_posts(posts_to_check)
+
+            # Log results
+            action_counts = {}
+            for verdict in verdicts:
+                action = verdict.action.value if verdict.action else "none"
+                action_counts[action] = action_counts.get(action, 0) + 1
+
+            if verdicts:
+                logging.info(
+                    f"🛡️ Time step {step + 1}: moderation complete - "
+                    f"actions: {action_counts}"
+                )
+
+        except Exception as e:
+            logging.error(f"Error during moderation: {e}")
+
+    def _get_posts_for_moderation(self, step: int) -> list:
+        """
+        Get posts that need moderation.
+
+        Args:
+            step: Current simulation step
+
+        Returns:
+            List of post dictionaries
+        """
+        try:
+            # Get news posts from the current and recent timesteps
+            # We check posts from the current timestep and previous 2 timesteps
+            min_timestep = max(0, step - 1)
+
+            cursor = self.conn.cursor()
+            cursor.execute('''
+                SELECT
+                    p.post_id,
+                    p.content,
+                    p.author_id,
+                    p.is_news,
+                    p.news_type,
+                    p.num_likes,
+                    p.num_shares,
+                    p.num_comments,
+                    pt.time_step
+                FROM posts p
+                LEFT JOIN post_timesteps pt ON p.post_id = pt.post_id
+                WHERE p.is_news = 1
+                AND p.author_id = 'agentverse_news'
+                AND (p.status IS NULL OR p.status != 'taken_down')
+                AND pt.time_step >= ?
+                ORDER BY pt.time_step DESC
+            ''', (min_timestep,))
+
+            posts = []
+            for row in cursor.fetchall():
+                posts.append({
+                    'post_id': row[0],
+                    'content': row[1],
+                    'user_id': row[2],
+                    'author_id': row[2],
+                    'is_news': bool(row[3]),
+                    'news_type': row[4],
+                    'num_likes': row[5] or 0,
+                    'num_shares': row[6] or 0,
+                    'num_comments': row[7] or 0,
+                    'time_step': row[8],
+                })
+
+            return posts
+
+        except Exception as e:
+            logging.error(f"Error getting posts for moderation: {e}")
+            return []
 
         # Stop the opinion balance background monitoring task
         if opinion_balance_task and not opinion_balance_task.done():
