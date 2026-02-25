@@ -3,6 +3,10 @@ Embedding 评分器
 
 阶段5: 基于 Embedding 相似度计算分数
 替代 X 算法的 Grok Transformer 实时预测
+
+支持双层 Embedding:
+- 本地 sentence-transformers (默认)
+- OpenAI Embedding API (可选)
 """
 
 from typing import List, Optional
@@ -14,7 +18,10 @@ class EmbeddingScorer:
     """
     Embedding 评分器
 
-    使用 sentence-transformers 轻量模型计算用户-帖子相似度
+    双层架构:
+    - 本地层: sentence-transformers 轻量模型，CPU 友好
+    - 云端层: OpenAI Embedding API，精度更高
+
     替代 X 算法的 Grok Transformer 实时预测概率
     """
 
@@ -32,10 +39,12 @@ class EmbeddingScorer:
             self.embedding_manager = EmbeddingManager(
                 model_name=self.config.model_name,
                 cache_embeddings=self.config.cache_embeddings,
-                max_cache_size=self.config.max_cache_size
+                max_cache_size=self.config.max_cache_size,
+                use_openai_embedding=self.config.use_openai_embedding,
+                openai_model_name=self.config.openai_model_name
             )
         except ImportError:
-            # sentence-transformers 未安装
+            # 依赖未安装
             self.embedding_manager = None
 
     def score(

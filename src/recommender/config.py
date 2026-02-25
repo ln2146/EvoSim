@@ -51,13 +51,20 @@ class EmbeddingConfig:
     """
     Embedding 配置
 
-    使用 sentence-transformers 轻量模型替代 Grok Transformer
+    双层架构:
+    - 本地层: sentence-transformers 轻量模型 (默认)
+    - 云端层: OpenAI Embedding API (可选)
     """
     enabled: bool = True
+    # 本地模型配置
     model_name: str = "paraphrase-MiniLM-L6-v2"  # 轻量模型，CPU 可跑
-    cache_embeddings: bool = True                 # 缓存帖子 embedding
-    embedding_weight: float = 0.3                 # embedding 分数权重
-    max_cache_size: int = 10000                   # 最大缓存条目数
+    # OpenAI 配置
+    use_openai_embedding: bool = False           # 是否使用 OpenAI Embedding
+    openai_model_name: str = None                # OpenAI 模型名 (None 使用默认)
+    # 通用配置
+    cache_embeddings: bool = True                # 缓存帖子 embedding
+    embedding_weight: float = 0.3                # embedding 分数权重
+    max_cache_size: int = 10000                  # 最大缓存条目数
 
 
 @dataclass

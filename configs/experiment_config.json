@@ -81,6 +81,7 @@
         "embedding": {
             "enabled": true,
             "model_name": "paraphrase-MiniLM-L6-v2",
+            "use_openai_embedding": false,
             "cache_embeddings": true,
             "embedding_weight": 0.3,
             "max_cache_size": 10000
