@@ -18,7 +18,7 @@ from .sources import InNetworkSource, OutNetworkSource
 from .hydrators import CoreDataHydrator, AuthorHydrator
 from .filters import PreScoringFilters, PostSelectionFilters
 from .filters.moderation_filter import ModerationFilter
-from .scorers import WeightedScorer, EmbeddingScorer, AuthorDiversityScorer, OONScorer
+from .scorers import WeightedScorer, EmbeddingScorer, AuthorDiversityScorer, OONScorer, AuthorCredibilityScorer
 from .selectors import TopKSelector
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,7 @@ class FeedPipeline:
                 )
         self.diversity_scorer = AuthorDiversityScorer(self.config.diversity)
         self.oon_scorer = OONScorer(self.config.oon)
+        self.credibility_scorer = AuthorCredibilityScorer(self.config.author_credibility)
 
         # Stage 6: Selector
         self.selector = TopKSelector(self.config.selection)
@@ -218,6 +219,9 @@ class FeedPipeline:
 
         # 5.3 OON 评分
         ctx.candidates = self.oon_scorer.score(ctx.candidates)
+
+        # 5.35 作者信誉调整
+        ctx.candidates = self.credibility_scorer.score(ctx.candidates)
 
         # 5.4 作者多样性惩罚
         ctx.candidates = self.diversity_scorer.apply_penalty(ctx.candidates)
