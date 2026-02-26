@@ -204,7 +204,7 @@ class UserManager:
                 progress = i / total_users
                 bar_length = 30
                 filled_length = int(bar_length * progress)
-                bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                bar = '#' * filled_length + '-' * (bar_length - filled_length)
                 percentage = int(progress * 100)
                 print(f"\rUsers User creation progress: [{bar}] {percentage}% ({i}/{total_users})", end='', flush=True)
                 
@@ -220,7 +220,7 @@ class UserManager:
                 users.append(user)
             
             # Finalize the progress bar
-            print(f"\rUsers User creation progress: [{'█' * 30}] 100% ({total_users}/{total_users})")
+            print(f"\rUsers User creation progress: [{'#' * 30}] 100% ({total_users}/{total_users})")
             print()  # newline
             
             cursor = self.conn.execute("SELECT COUNT(*) FROM users")
@@ -262,7 +262,7 @@ class UserManager:
             bar_length = 30
             ratio = min(1.0, follow_count / expected_total)
             filled_length = int(bar_length * ratio)
-            bar = '█' * filled_length + '░' * (bar_length - filled_length)
+            bar = '#' * filled_length + '░' * (bar_length - filled_length)
             percentage = int(ratio * 100)
             print(f"\rFollows Follow creation: [{bar}] {percentage}% ({follow_count}/{expected_total})", end='', flush=True)
             
@@ -322,7 +322,7 @@ class UserManager:
                     _print_progress()
 
         # Complete the progress bar (overwrite the line and add newline)
-        print(f"\rFollows Follow creation: [{'█' * 30}] 100% ({follow_count}/{expected_total})")
+        print(f"\rFollows Follow creation: [{'#' * 30}] 100% ({follow_count}/{expected_total})")
         print()  # newline
         
         print(f"[OK] Created {follow_count} follow relationships")
