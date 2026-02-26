@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ElementType, type ReactNode } from 'react'
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { Activity, Play, Square, Shield, Bug, Sparkles, Flame, MessageSquare, ArrowLeft, ThumbsUp, Share2, MessageCircle, BarChart3 } from 'lucide-react'
+import { Activity, Play, Square, Shield, Bug, Sparkles, Flame, MessageSquare, ArrowLeft, ThumbsUp, Share2, MessageCircle, BarChart3, Eye } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { createInitialFlowState, routeLogLine, stripLogPrefix, type FlowState, type Role } from '../lib/interventionFlow/logRouter'
 import { createEventSourceLogStream, createSimulatedLogStream, type LogStream } from '../lib/interventionFlow/logStream'
@@ -25,6 +25,7 @@ import { useLeaderboard } from '../hooks/useLeaderboard'
 import { usePostDetail } from '../hooks/usePostDetail'
 import { usePostComments } from '../hooks/usePostComments'
 import { usePostAnalysis } from '../hooks/usePostAnalysis'
+import { getControlFlags, setModerationFlag } from '../services/api'
 
 const DEMO_BACKEND_LOG_LINES: string[] = [
   '2026-01-28 21:13:09,286 - INFO - 📊 Phase 1: perception and decision',
@@ -325,6 +326,7 @@ export default function DynamicDemo() {
   const [enableAttack, setEnableAttack] = useState(false)
   const [enableAftercare, setEnableAftercare] = useState(false)
   const [enableEvoCorps, setEnableEvoCorps] = useState(false)
+  const [enableModeration, setEnableModeration] = useState(false)
 
   const [analysisOpen, setAnalysisOpen] = useState(false)
 
@@ -332,6 +334,7 @@ export default function DynamicDemo() {
   const [isStopping, setIsStopping] = useState(false)
   const [isTogglingAttack, setIsTogglingAttack] = useState(false)
   const [isTogglingAftercare, setIsTogglingAftercare] = useState(false)
+  const [isTogglingModeration, setIsTogglingModeration] = useState(false)
 
   const [flowState, setFlowState] = useState<FlowState>(() => createInitialFlowState())
   const [opinionBalanceStartMs, setOpinionBalanceStartMs] = useState<number | null>(null)
@@ -367,10 +370,11 @@ export default function DynamicDemo() {
         // The panel should start streaming only after the user clicks the toggle (so we can
         // treat that moment as the "start time" for which logs should be shown).
 
-        // 同步恶意攻击和事后干预的状态
+        // 同步恶意攻击、事后干预和内容审核的状态
         if (data.control_flags) {
           setEnableAttack(data.control_flags.attack_enabled ?? false)
           setEnableAftercare(data.control_flags.aftercare_enabled ?? false)
+          setEnableModeration(data.control_flags.moderation_enabled ?? false)
         }
       } catch (error) {
         console.error('Failed to check status:', error)
@@ -597,6 +601,7 @@ export default function DynamicDemo() {
         enableAttack={enableAttack}
         enableAftercare={enableAftercare}
         enableEvoCorps={enableEvoCorps}
+        enableModeration={enableModeration}
         onToggleAttack={async () => {
           if (isTogglingAttack) return
 
@@ -679,6 +684,24 @@ export default function DynamicDemo() {
             console.error('Error toggling aftercare:', error)
           } finally {
             setIsTogglingAftercare(false)
+          }
+        }}
+        onToggleModeration={async () => {
+          if (isTogglingModeration) return
+
+          setIsTogglingModeration(true)
+          try {
+            const result = await setModerationFlag(!enableModeration)
+            if (result && 'moderation_enabled' in result) {
+              setEnableModeration(result.moderation_enabled)
+            } else {
+              throw new Error('API 返回异常')
+            }
+          } catch (error) {
+            alert(`操作失败：${error instanceof Error ? error.message : '网络错误'}`)
+            console.error('Error toggling moderation:', error)
+          } finally {
+            setIsTogglingModeration(false)
           }
         }}
         onToggleEvoCorps={async () => {
@@ -853,9 +876,11 @@ function DynamicDemoHeader({
   enableAttack,
   enableAftercare,
   enableEvoCorps,
+  enableModeration,
   onToggleAttack,
   onToggleAftercare,
   onToggleEvoCorps,
+  onToggleModeration,
 }: {
   isRunning: boolean
   isStarting?: boolean
@@ -866,9 +891,11 @@ function DynamicDemoHeader({
   enableAttack: boolean
   enableAftercare: boolean
   enableEvoCorps: boolean
+  enableModeration: boolean
   onToggleAttack: () => void | Promise<void>
   onToggleAftercare: () => void | Promise<void>
   onToggleEvoCorps: () => void | Promise<void>
+  onToggleModeration: () => void | Promise<void>
 }) {
   return (
     <div className="glass-card p-6 flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
@@ -914,6 +941,12 @@ function DynamicDemoHeader({
               label="开启事后干预"
               enabled={enableAftercare}
               onToggle={onToggleAftercare}
+            />
+            <ToggleCard
+              icon={Eye}
+              label="开启内容审核"
+              enabled={enableModeration}
+              onToggle={onToggleModeration}
             />
             <ToggleCard
               icon={Shield}
