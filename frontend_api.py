@@ -3290,18 +3290,21 @@ def get_dynamic_demo_status():
                 control_data = control_response.json()
                 result['control_flags'] = {
                     'attack_enabled': control_data.get('attack_enabled', False),
-                    'aftercare_enabled': control_data.get('aftercare_enabled', False)
+                    'aftercare_enabled': control_data.get('aftercare_enabled', False),
+                    'moderation_enabled': control_data.get('moderation_enabled', False)
                 }
             else:
                 result['control_flags'] = {
                     'attack_enabled': False,
-                    'aftercare_enabled': False
+                    'aftercare_enabled': False,
+                    'moderation_enabled': False
                 }
         except Exception:
             # 如果无法连接到控制服务器，返回默认值
             result['control_flags'] = {
                 'attack_enabled': False,
-                'aftercare_enabled': False
+                'aftercare_enabled': False,
+                'moderation_enabled': False
             }
         
         # 返回 JSON 响应
@@ -3318,12 +3321,82 @@ def get_dynamic_demo_status():
             'opinion_balance': {'status': 'unknown', 'pid': None, 'uptime': 0},
             'control_flags': {
                 'attack_enabled': False,
-                'aftercare_enabled': False
+                'aftercare_enabled': False,
+                'moderation_enabled': False
             }
         }), 500
 
 
+# ============================================================================
+# Control API Proxy Endpoints (proxy to main.py control server on port 8000)
+# ============================================================================
 
+@app.route('/api/control/moderation', methods=['POST'])
+def set_moderation_flag():
+    """Set moderation flag (proxy to control server)"""
+    try:
+        import requests
+        data = request.get_json()
+        enabled = data.get('enabled', False)
+        response = requests.post(
+            'http://localhost:8000/control/moderation',
+            json={'enabled': enabled},
+            timeout=5
+        )
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/control/attack', methods=['POST'])
+def set_attack_flag():
+    """Set attack flag (proxy to control server)"""
+    try:
+        import requests
+        data = request.get_json()
+        enabled = data.get('enabled', False)
+        response = requests.post(
+            'http://localhost:8000/control/attack',
+            json={'enabled': enabled},
+            timeout=5
+        )
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/control/aftercare', methods=['POST'])
+def set_aftercare_flag():
+    """Set aftercare flag (proxy to control server)"""
+    try:
+        import requests
+        data = request.get_json()
+        enabled = data.get('enabled', False)
+        response = requests.post(
+            'http://localhost:8000/control/aftercare',
+            json={'enabled': enabled},
+            timeout=5
+        )
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/control/auto-status', methods=['POST'])
+def set_auto_status_flag():
+    """Set auto-status flag (proxy to control server)"""
+    try:
+        import requests
+        data = request.get_json()
+        enabled = data.get('enabled', False)
+        response = requests.post(
+            'http://localhost:8000/control/auto-status',
+            json={'enabled': enabled},
+            timeout=5
+        )
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 # ============================================================================
