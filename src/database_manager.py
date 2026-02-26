@@ -249,9 +249,11 @@ class DatabaseManager:
                 self.conn = ServiceConnection(self.service_url)
             else:
                 logging.warning("⚠️ Database service unavailable, falling back to direct connection")
+                self.use_service = False
                 self._init_direct_connection()
         except Exception as e:
             logging.warning(f"⚠️ Database service connection failed: {e}, falling back to direct connection")
+            self.use_service = False
             self._init_direct_connection()
     
     def _init_direct_connection(self):
@@ -309,11 +311,8 @@ class DatabaseManager:
         # Enable foreign keys
         self.conn.execute("PRAGMA foreign_keys = ON")
 
-        # Initialize database
-        if self.reset_db:
-            self.reset_database()
-        else:
-            self.create_tables()
+        # Note: Tables will be created by reset_database() called from __init__
+        # Don't call reset_database here to avoid recursion
 
     def reset_database(self):
         """Reset the database and create new tables."""

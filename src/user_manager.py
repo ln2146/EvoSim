@@ -50,7 +50,7 @@ class UserManager:
                 # Update the current index
                 self.current_user_index = (self.current_user_index + num_to_sample) % len(self.all_user_configs)
 
-                print(f"🎭 Selecting users {self.current_user_index-num_to_sample+1}-{self.current_user_index} in sequence (gradual emotional evolution)")
+                print(f"Selecting users {self.current_user_index-num_to_sample+1}-{self.current_user_index} in sequence (gradual emotional evolution)")
                 
             # elif generation_method == 'agent_bank':
             #     from agent_config_generator_persona import generate_agent_configs_agent_bank
