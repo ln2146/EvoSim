@@ -612,6 +612,10 @@ export default function DynamicDemo() {
             }
           }
 
+          // 乐观更新：先改变状态，让 UI 立即响应
+          const newEnabled = !enableAttack
+          setEnableAttack(newEnabled)
+
           setIsTogglingAttack(true)
 
           try {
@@ -620,12 +624,13 @@ export default function DynamicDemo() {
               headers: {
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({ enabled: !enableAttack }),
+              body: JSON.stringify({ enabled: newEnabled }),
             })
 
             const data = await response.json()
 
             if (response.ok && data.attack_enabled !== undefined) {
+              // 以服务器返回值为准
               setEnableAttack(data.attack_enabled)
 
               // 显示成功提示
@@ -635,9 +640,13 @@ export default function DynamicDemo() {
                 alert('✅ 恶意水军攻击已关闭')
               }
             } else {
+              // API 返回异常，回滚
+              setEnableAttack(!newEnabled)
               throw new Error('API 返回异常')
             }
           } catch (error) {
+            // 出错时回滚
+            setEnableAttack(!newEnabled)
             alert(`❌ 操作失败：${error instanceof Error ? error.message : '网络错误'}`)
             console.error('Error toggling attack:', error)
           } finally {
@@ -654,6 +663,10 @@ export default function DynamicDemo() {
             }
           }
 
+          // 乐观更新：先改变状态，让 UI 立即响应
+          const newEnabled = !enableAftercare
+          setEnableAftercare(newEnabled)
+
           setIsTogglingAftercare(true)
 
           try {
@@ -662,12 +675,13 @@ export default function DynamicDemo() {
               headers: {
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({ enabled: !enableAftercare }),
+              body: JSON.stringify({ enabled: newEnabled }),
             })
 
             const data = await response.json()
 
             if (response.ok && data.aftercare_enabled !== undefined) {
+              // 以服务器返回值为准
               setEnableAftercare(data.aftercare_enabled)
 
               // 显示成功提示
@@ -677,9 +691,13 @@ export default function DynamicDemo() {
                 alert('✅ 事后干预已关闭')
               }
             } else {
+              // API 返回异常，回滚
+              setEnableAftercare(!newEnabled)
               throw new Error('API 返回异常')
             }
           } catch (error) {
+            // 出错时回滚
+            setEnableAftercare(!newEnabled)
             alert(`❌ 操作失败：${error instanceof Error ? error.message : '网络错误'}`)
             console.error('Error toggling aftercare:', error)
           } finally {
@@ -689,10 +707,15 @@ export default function DynamicDemo() {
         onToggleModeration={async () => {
           if (isTogglingModeration) return
 
+          // 乐观更新：先改变状态，让 UI 立即响应
+          const newEnabled = !enableModeration
+          setEnableModeration(newEnabled)
+
           setIsTogglingModeration(true)
           try {
-            const result = await setModerationFlag(!enableModeration)
+            const result = await setModerationFlag(newEnabled)
             if (result && 'moderation_enabled' in result) {
+              // 以服务器返回值为准（通常和乐观值一致）
               setEnableModeration(result.moderation_enabled)
 
               // 显示成功提示
@@ -702,9 +725,13 @@ export default function DynamicDemo() {
                 alert('✅ 内容审核已关闭')
               }
             } else {
+              // API 返回异常，回滚
+              setEnableModeration(!newEnabled)
               throw new Error('API 返回异常')
             }
           } catch (error) {
+            // 出错时回滚
+            setEnableModeration(!newEnabled)
             alert(`❌ 操作失败：${error instanceof Error ? error.message : '网络错误'}`)
             console.error('Error toggling moderation:', error)
           } finally {
