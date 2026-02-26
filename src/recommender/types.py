@@ -58,6 +58,11 @@ class PostCandidate(BaseModel):
     weighted_score: float = 0.0        # 加权后分数
     diversity_penalty: float = 1.0     # 多样性惩罚系数
     oon_adjustment: float = 1.0        # Out-of-Network 调整系数
+
+    # 作者特征字段（由 AuthorHydrator 在 Stage 3 填充）
+    author_follower_count: Optional[int] = None
+    author_influence_score: Optional[float] = None
+
     final_score: float = 0.0           # 最终排序分数
 
     class Config:
