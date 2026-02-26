@@ -29,7 +29,7 @@ from tracked_opinion_helper import (
 
 # Moderation system
 from moderation import ModerationService, ModerationConfig, load_config_from_env
-from keys import OPENAI_API_KEY
+from keys import OPENAI_API_KEY, MODERATION_API_KEY, MODERATION_BASE_URL
 
 
 class Simulation:
@@ -123,9 +123,10 @@ class Simulation:
         self.moderation_service = None
         try:
             moderation_config = load_config_from_env()
-            # Enable OpenAI provider with API key
-            if OPENAI_API_KEY and moderation_config.openai_provider:
-                moderation_config.openai_provider.api_key = OPENAI_API_KEY
+            # Enable OpenAI Moderation provider with dedicated key and official endpoint
+            if MODERATION_API_KEY and moderation_config.openai_provider:
+                moderation_config.openai_provider.api_key = MODERATION_API_KEY
+                moderation_config.openai_provider.api_endpoint = f"{MODERATION_BASE_URL}/v1/moderations"
                 moderation_config.openai_provider.enabled = True
 
             # Set check_news_only=True based on user requirement
