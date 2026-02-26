@@ -13,7 +13,9 @@
       "Bash(sed:*)",
       "Bash(npm run:*)",
       "Bash(npx tsc:*)",
-      "Bash(npx:*)"
+      "Bash(npx:*)",
+      "Bash(taskkill:*)",
+      "Bash(rm:*)"
     ]
   }
 }
