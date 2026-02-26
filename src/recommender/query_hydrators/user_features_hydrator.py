@@ -63,11 +63,16 @@ class UserFeaturesHydrator:
 
         Returns:
             embedding 向量
-        """
-        if not self.embedding_manager:
-            return None
 
-        try:
-            return self.embedding_manager.encode_text(persona)
-        except Exception:
-            return None
+        Raises:
+            RuntimeError: If embedding_manager is not set or encoding fails
+        """
+        # NO FALLBACK: Require embedding_manager to be set
+        if not self.embedding_manager:
+            raise RuntimeError(
+                "UserFeaturesHydrator._compute_persona_embedding() called but embedding_manager is None. "
+                "Either disable embedding in config or ensure embedding_manager is properly initialized."
+            )
+
+        # NO FALLBACK: Propagate encoding errors instead of returning None
+        return self.embedding_manager.encode_text(persona)

@@ -73,11 +73,15 @@ class FeedPipeline:
         self.embedding_scorer = None
         if self.config.embedding.enabled:
             self.embedding_scorer = EmbeddingScorer(self.config.embedding)
-            # 设置 embedding manager 到 user_features_hydrator
-            if self.embedding_scorer.embedding_manager:
-                self.user_features_hydrator.set_embedding_manager(
-                    self.embedding_scorer.embedding_manager
+            # NO FALLBACK: Require embedding_manager to be initialized if embedding is enabled
+            if not self.embedding_scorer.embedding_manager:
+                raise RuntimeError(
+                    "RecommenderConfig.embedding.enabled=True but EmbeddingScorer.embedding_manager is None. "
+                    "Either disable embedding in config or ensure dependencies are properly installed."
                 )
+            self.user_features_hydrator.set_embedding_manager(
+                self.embedding_scorer.embedding_manager
+            )
         self.diversity_scorer = AuthorDiversityScorer(self.config.diversity)
         self.oon_scorer = OONScorer(self.config.oon)
         self.credibility_scorer = AuthorCredibilityScorer(self.config.author_credibility)

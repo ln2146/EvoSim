@@ -81,9 +81,16 @@ class CompositeProvider:
 
         Returns:
             审核裁决，如果所有提供者都认为内容安全则返回 None
+
+        Raises:
+            RuntimeError: If no moderation providers are enabled
         """
+        # NO FALLBACK: Require at least one provider to be enabled
         if not self.providers:
-            return None
+            raise RuntimeError(
+                "CompositeProvider.check() called but no moderation providers are enabled. "
+                "Please enable at least one moderation provider (openai or keyword) in config."
+            )
 
         if strategy == "priority":
             return self._check_priority(content, metadata)

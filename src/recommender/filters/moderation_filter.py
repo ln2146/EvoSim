@@ -61,13 +61,19 @@ class ModerationFilter:
 
         Returns:
             过滤后的候选列表
+
+        Raises:
+            RuntimeError: If moderation is disabled via control_flags
         """
         # Import control_flags here to avoid circular import
         import control_flags
 
-        # Check both config.enabled and global control_flags.moderation_enabled
-        if not (self.config.enabled or control_flags.moderation_enabled):
-            return candidates
+        # NO FALLBACK: Require moderation to be enabled via control_flags
+        if not control_flags.moderation_enabled:
+            raise RuntimeError(
+                "ModerationFilter.filter() called but control_flags.moderation_enabled is False. "
+                "Enable moderation via the control API or set control_flags.moderation_enabled = True"
+            )
 
         apply_degradation = (
             apply_degradation

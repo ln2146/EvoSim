@@ -99,64 +99,62 @@ class ModerationService:
         Returns:
             审核裁决，None 表示不需要干预
         """
-        if not self.config.enabled or not self.provider:
+        # NO FALLBACK: Require service to be enabled and provider initialized
+        if not self.config.enabled:
+            raise RuntimeError(f"ModerationService is not enabled but check_post() was called for post {post_id}")
+        if not self.provider:
+            raise RuntimeError(f"ModerationProvider not initialized but check_post() was called for post {post_id}")
+
+        # 更新统计
+        self.stats.total_checked += 1
+
+        # 1. 调用审核提供者
+        verdict = self.provider.check(content, metadata)
+
+        if verdict is None:
             return None
 
-        try:
+        # 填充基础信息
+        verdict.post_id = post_id
+        verdict.user_id = user_id
+
+        # 2. 确定干预动作
+        action = self._determine_action(verdict)
+
+        if action == ModerationAction.NONE:
+            return None
+
+        verdict.action = action
+
+        # 3. 设置动作参数
+        self._setup_action_params(verdict)
+
+        # 4. 执行干预动作
+        success = self._execute_action(verdict)
+
+        if success:
+            # 5. 记录
+            self.repository.save(verdict)
+
             # 更新统计
-            self.stats.total_checked += 1
+            self.stats.total_flagged += 1
+            self.stats.action_counts[action] = (
+                self.stats.action_counts.get(action, 0) + 1
+            )
+            self.stats.severity_counts[verdict.severity] = (
+                self.stats.severity_counts.get(verdict.severity, 0) + 1
+            )
+            self.stats.category_counts[verdict.category] = (
+                self.stats.category_counts.get(verdict.category, 0) + 1
+            )
 
-            # 1. 调用审核提供者
-            verdict = self.provider.check(content, metadata)
+            logger.info(
+                f"Moderation action executed: post={post_id}, "
+                f"action={action.value}, severity={verdict.severity.value}, "
+                f"category={verdict.category.value}"
+            )
 
-            if verdict is None:
-                return None
-
-            # 填充基础信息
-            verdict.post_id = post_id
-            verdict.user_id = user_id
-
-            # 2. 确定干预动作
-            action = self._determine_action(verdict)
-
-            if action == ModerationAction.NONE:
-                return None
-
-            verdict.action = action
-
-            # 3. 设置动作参数
-            self._setup_action_params(verdict)
-
-            # 4. 执行干预动作
-            success = self._execute_action(verdict)
-
-            if success:
-                # 5. 记录
-                self.repository.save(verdict)
-
-                # 更新统计
-                self.stats.total_flagged += 1
-                self.stats.action_counts[action] = (
-                    self.stats.action_counts.get(action, 0) + 1
-                )
-                self.stats.severity_counts[verdict.severity] = (
-                    self.stats.severity_counts.get(verdict.severity, 0) + 1
-                )
-                self.stats.category_counts[verdict.category] = (
-                    self.stats.category_counts.get(verdict.category, 0) + 1
-                )
-
-                logger.info(
-                    f"Moderation action executed: post={post_id}, "
-                    f"action={action.value}, severity={verdict.severity.value}, "
-                    f"category={verdict.category.value}"
-                )
-
-            return verdict
-
-        except Exception as e:
-            logger.error(f"Error checking post {post_id}: {e}")
-            return None
+        return verdict
 
     def check_batch(self, posts: List[Dict[str, Any]]) -> List[ModerationVerdict]:
         """
@@ -168,8 +166,11 @@ class ModerationService:
         Returns:
             裁决列表
         """
-        if not self.config.enabled or not self.provider:
-            return []
+        # NO FALLBACK: Require service to be enabled and provider initialized
+        if not self.config.enabled:
+            raise RuntimeError("ModerationService is not enabled but check_batch() was called")
+        if not self.provider:
+            raise RuntimeError("ModerationProvider not initialized but check_batch() was called")
 
         verdicts = []
 

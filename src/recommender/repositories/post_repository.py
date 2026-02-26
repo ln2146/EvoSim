@@ -37,12 +37,9 @@ class PostRepository:
             WHERE p.is_news = TRUE
             AND (p.status IS NULL OR p.status != 'taken_down')
         '''
-        try:
-            return fetch_all(query) or []
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return []
-            raise
+        # NO FALLBACK: Propagate database errors instead of returning empty list
+        result = fetch_all(query)
+        return result if result else []
 
     def get_active_non_news_posts(self) -> List[Dict[str, Any]]:
         """获取所有活跃非新闻帖子"""
@@ -51,12 +48,9 @@ class PostRepository:
             WHERE (p.is_news IS NULL OR p.is_news != TRUE)
             AND (p.status IS NULL OR p.status != 'taken_down')
         '''
-        try:
-            return fetch_all(query) or []
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return []
-            raise
+        # NO FALLBACK: Propagate database errors instead of returning empty list
+        result = fetch_all(query)
+        return result if result else []
 
     def get_negative_news_posts(self) -> List[Dict[str, Any]]:
         """获取负面/假新闻帖子"""
@@ -66,12 +60,9 @@ class PostRepository:
             AND p.news_type = 'fake'
             AND (p.status IS NULL OR p.status != 'taken_down')
         '''
-        try:
-            return fetch_all(query) or []
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return []
-            raise
+        # NO FALLBACK: Propagate database errors instead of returning empty list
+        result = fetch_all(query)
+        return result if result else []
 
     def get_posts_by_authors(self, author_ids: List[str]) -> List[Dict[str, Any]]:
         """
@@ -92,12 +83,9 @@ class PostRepository:
             WHERE p.author_id IN ({placeholders})
             AND (p.status IS NULL OR p.status != 'taken_down')
         '''
-        try:
-            return fetch_all(query, tuple(author_ids)) or []
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return []
-            raise
+        # NO FALLBACK: Propagate database errors instead of returning empty list
+        result = fetch_all(query, tuple(author_ids))
+        return result if result else []
 
     def get_all_active_posts(self) -> List[Dict[str, Any]]:
         """获取所有活跃帖子"""
@@ -105,12 +93,9 @@ class PostRepository:
             {self.BASE_SELECT}
             WHERE (p.status IS NULL OR p.status != 'taken_down')
         '''
-        try:
-            return fetch_all(query) or []
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return []
-            raise
+        # NO FALLBACK: Propagate database errors instead of returning empty list
+        result = fetch_all(query)
+        return result if result else []
 
     def get_post_timesteps(self) -> Dict[str, int]:
         """
@@ -119,13 +104,9 @@ class PostRepository:
         Returns:
             {post_id: time_step} 字典
         """
-        try:
-            rows = fetch_all('SELECT post_id, time_step FROM post_timesteps') or []
-            return {str(r['post_id']): r['time_step'] for r in rows}
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return {}
-            raise
+        # NO FALLBACK: Propagate database errors instead of returning empty dict
+        rows = fetch_all('SELECT post_id, time_step FROM post_timesteps')
+        return {str(r['post_id']): r['time_step'] for r in rows if r}
 
     def get_post_by_id(self, post_id: str) -> Optional[Dict[str, Any]]:
         """获取单个帖子"""
@@ -133,9 +114,5 @@ class PostRepository:
             {self.BASE_SELECT}
             WHERE p.post_id = ?
         '''
-        try:
-            return fetch_one(query, (post_id,))
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return None
-            raise
+        # NO FALLBACK: Propagate database errors instead of returning None
+        return fetch_one(query, (post_id,))
