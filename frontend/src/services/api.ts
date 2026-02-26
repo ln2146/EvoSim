@@ -240,4 +240,67 @@ export const getOpinionBalanceData = async (dbName: string) => {
   return response.data
 }
 
+// Control Flags APIs
+export interface ControlFlags {
+  attack_enabled: boolean
+  aftercare_enabled: boolean
+  auto_status: boolean | null
+  moderation_enabled: boolean
+}
+
+export const getControlFlags = async (): Promise<ControlFlags> => {
+  try {
+    const response = await api.get('/control/status')
+    return response.data
+  } catch (error) {
+    console.error('Failed to fetch control flags:', error)
+    return {
+      attack_enabled: false,
+      aftercare_enabled: false,
+      auto_status: false,
+      moderation_enabled: false,
+    }
+  }
+}
+
+export const setModerationFlag = async (enabled: boolean): Promise<{ moderation_enabled: boolean }> => {
+  try {
+    const response = await api.post('/control/moderation', { enabled })
+    return response.data
+  } catch (error) {
+    console.error('Failed to set moderation flag:', error)
+    throw error
+  }
+}
+
+export const setAttackFlag = async (enabled: boolean): Promise<{ attack_enabled: boolean }> => {
+  try {
+    const response = await api.post('/control/attack', { enabled })
+    return response.data
+  } catch (error) {
+    console.error('Failed to set attack flag:', error)
+    throw error
+  }
+}
+
+export const setAftercareFlag = async (enabled: boolean): Promise<{ aftercare_enabled: boolean }> => {
+  try {
+    const response = await api.post('/control/aftercare', { enabled })
+    return response.data
+  } catch (error) {
+    console.error('Failed to set aftercare flag:', error)
+    throw error
+  }
+}
+
+export const setAutoStatusFlag = async (enabled: boolean): Promise<{ auto_status: boolean | null }> => {
+  try {
+    const response = await api.post('/control/auto-status', { enabled })
+    return response.data
+  } catch (error) {
+    console.error('Failed to set auto-status flag:', error)
+    throw error
+  }
+}
+
 export default api
