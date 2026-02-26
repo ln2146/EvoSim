@@ -390,7 +390,11 @@ class Simulation:
 
             # Analyze spread for all injected news posts (logging disabled)
             for news_post_id in injected_news_posts:
-                spread_metrics = self.news_spread_analyzer.analyze_spread(news_post_id, step)
+                try:
+                    spread_metrics = self.news_spread_analyzer.analyze_spread(news_post_id, step)
+                except Exception as e:
+                    logging.warning(f"Failed to analyze spread for post {news_post_id}: {e}")
+                    continue
 
             # Update influence scores
             Utils.update_user_influence(self.conn, self.db_path)

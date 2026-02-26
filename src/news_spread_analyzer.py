@@ -213,6 +213,13 @@ class NewsSpreadAnalyzer:
                 return
             else:
                 raise e
+        except sqlite3.IntegrityError as e:
+            # Handle foreign key constraint failure (post_id doesn't exist in posts table)
+            if "FOREIGN KEY" in str(e):
+                logging.warning(f"Foreign key constraint failed for post_id {news_post_id}, skipping storage (likely a dummy post)")
+                return
+            else:
+                raise e
 
     def should_take_down_post(
         self, 
