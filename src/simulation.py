@@ -79,9 +79,9 @@ class Simulation:
             self.multi_model_selector = multi_model_selector
             # Create an optimized client using the MultiModelSelector configuration
             self.openai_client, _ = multi_model_selector.create_openai_client()
-            print(f"✅ Simulation created an optimized client via MultiModelSelector")
+            print(f"[OK] Simulation created an optimized client via MultiModelSelector")
         except Exception as e:
-            print(f"⚠️ MultiModelSelector initialization failed: {e}, falling back to selector-only client")
+            print(f"[WARN] MultiModelSelector initialization failed: {e}, falling back to selector-only client")
             from multi_model_selector import MultiModelSelector
             # Unified model selection via MultiModelSelector (regular role)
             self.multi_model_selector = MultiModelSelector()
@@ -320,7 +320,7 @@ class Simulation:
                 current_user_count = len(self.users)
 
                 if current_user_count >= max_users:
-                    logging.info(f"⚠️ Time step {step + 1}: maximum user limit reached ({max_users}); skipping new user addition")
+                    logging.info(f"[WARN] Time step {step + 1}: maximum user limit reached ({max_users}); skipping new user addition")
                 else:
                     # Calculate the number of new users - match the initial user count
                     users_per_step = new_user_config.get('users_per_step', 'same_as_initial')
@@ -333,7 +333,7 @@ class Simulation:
                     # Ensure we do not exceed the maximum users
                     if current_user_count + num_new_users > max_users:
                         num_new_users = max_users - current_user_count
-                        logging.info(f"⚠️ Time step {step + 1}: adjusted new user count to {num_new_users} to avoid exceeding the limit")
+                        logging.info(f"[WARN] Time step {step + 1}: adjusted new user count to {num_new_users} to avoid exceeding the limit")
 
                     if num_new_users > 0:
                         logging.info(f"🆕 Time step {step + 1}: preparing to add {num_new_users} new users")
@@ -342,9 +342,9 @@ class Simulation:
                         # Update our reference to users
                         self.users = self.user_manager.users
 
-                        logging.info(f"✅ Time step {step + 1}: successfully added {num_new_users} new users, total users: {len(self.users)}")
+                        logging.info(f"[OK] Time step {step + 1}: successfully added {num_new_users} new users, total users: {len(self.users)}")
                     else:
-                        logging.info(f"⚠️ Time step {step + 1}: cannot add users; max user limit reached")
+                        logging.info(f"[WARN] Time step {step + 1}: cannot add users; max user limit reached")
 
             # Each user creates a post (only if generate_own_post is True)
             if self.generate_own_post:
@@ -436,7 +436,7 @@ class Simulation:
             remaining_posts = max_posts - current_post_count
 
             if remaining_posts <= 0:
-                logging.info(f"⚠️ Time step {step + 1} complete - reached max post limit: {current_post_count}/{max_posts}")
+                logging.info(f"[WARN] Time step {step + 1} complete - reached max post limit: {current_post_count}/{max_posts}")
             else:
                 logging.debug(f"📊 Time step {step + 1} complete - post count: {current_post_count}/{max_posts}")
 
@@ -492,10 +492,10 @@ class Simulation:
             else:
                 # 同时检查 error 和 reason 字段
                 error_msg = attack_result.get('error') or attack_result.get('reason', 'unknown')
-                logging.warning(f"⚠️ Malicious bot batch attack failed: {error_msg}")
+                logging.warning(f"[WARN] Malicious bot batch attack failed: {error_msg}")
 
         except Exception as e:
-            logging.error(f"❌ Malicious bot batch attack exception: {e}")
+            logging.error(f"[ERR] Malicious bot batch attack exception: {e}")
 
     async def _run_fact_checking_async(self, step: int, fact_check_limit: int, current_timestep: int = None, experiment_type: str = "third_party_fact_checking"):
         """
@@ -772,7 +772,7 @@ class Simulation:
             print("\n⏳ Waiting for opinion balance tasks to finish...")
             await self._wait_for_intervention_tasks_completion()
             await self._wait_for_coordination_monitoring_handles()
-            print("✅ Monitoring wait complete")
+            print("[OK] Monitoring wait complete")
 
             # Check if any briefings were generated
             import os
@@ -783,9 +783,9 @@ class Simulation:
                     for file in briefing_files[:3]:  # Show the first 3
                         print(f"   - {file}")
                 else:
-                    print(f"⚠️  No briefing files found; the monitoring loop might not be running correctly")
+                    print(f"[WARN]  No briefing files found; the monitoring loop might not be running correctly")
             else:
-                print(f"⚠️  'logs' directory missing; briefings may not have been generated")
+                print(f"[WARN]  'logs' directory missing; briefings may not have been generated")
 
         except Exception as e:
             logging.error(f"Error while waiting for monitor completion: {e}")
@@ -936,7 +936,7 @@ class Simulation:
             post_rows = cursor.fetchall()
 
             if not post_rows:
-                print("⚠️  No available posts for comment generation")
+                print("[WARN]  No available posts for comment generation")
                 return
 
             # Create a simple post object
@@ -951,7 +951,7 @@ class Simulation:
             print(f"📊 Found {len(available_posts)} available posts")
 
         except Exception as e:
-            print(f"❌ Failed to fetch posts: {e}")
+            print(f"[ERR] Failed to fetch posts: {e}")
             return
 
         # Build the list of parallel tasks
@@ -981,7 +981,7 @@ class Simulation:
 
         # Execute all tasks in parallel
         if tasks:
-            print(f"⚡ Starting parallel execution...")
+            print(f"[FAST] Starting parallel execution...")
             try:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -989,15 +989,15 @@ class Simulation:
                 success_count = sum(1 for r in results if not isinstance(r, Exception))
                 error_count = len(results) - success_count
 
-                print(f"✅ Parallel generation complete!")
+                print(f"[OK] Parallel generation complete!")
                 print(f"   📊 Successes: {success_count} tasks")
-                print(f"   ❌ Failures: {error_count} tasks")
+                print(f"   [ERR] Failures: {error_count} tasks")
                 print("=" * 60)
 
             except Exception as e:
-                print(f"❌ Parallel execution failed: {e}")
+                print(f"[ERR] Parallel execution failed: {e}")
         else:
-            print("⚠️  No tasks to execute")
+            print("[WARN]  No tasks to execute")
 
     def _create_normal_user_tasks(self, available_posts):
         """Create normal user comment generation tasks for concurrent execution"""
@@ -1126,7 +1126,7 @@ class Simulation:
             #     post.post_id, post.content, post.author_id
             # )
             # tasks.append(task)
-            # print(f"   ✅ Created malicious attack task for post {post.post_id}")
+            # print(f"   [OK] Created malicious attack task for post {post.post_id}")
 
         print(f"   📊 Live attack mechanism deprecated; now execute batch attacks at the end of each timestep")
         return tasks
@@ -1172,7 +1172,7 @@ class Simulation:
                 return {"success": False, "error": "comment generation failed"}
 
         except Exception as e:
-            print(f"❌ User {user.user_id} concurrent comment generation failed: {e}")
+            print(f"[ERR] User {user.user_id} concurrent comment generation failed: {e}")
             return {"success": False, "error": str(e)}
 
     async def _background_opinion_balance_monitor(self):
@@ -1191,7 +1191,7 @@ class Simulation:
                 # Execute the monitoring scan
                 await self._monitor_trending_posts_background()
 
-                print(f"✅ [Monitoring cycle {monitor_count}] scan complete")
+                print(f"[OK] [Monitoring cycle {monitor_count}] scan complete")
 
         except asyncio.CancelledError:
             print(f"🔍 Opinion balance background monitoring stopped (ran for {monitor_count} cycles)")
@@ -1367,22 +1367,22 @@ Latest comments (chronological):"""
                                     print(f"   ⏭️  Skip duplicate launch for post {post_id}: task already registered")
                                     continue
                                 
-                                print(f"   ✅ Opinion balance workflow launched asynchronously")
+                                print(f"   [OK] Opinion balance workflow launched asynchronously")
                                 print(f"   📋 Task ID: {post_id}")
                                 print(f"   ⏰ Start time: {datetime.now().strftime('%H:%M:%S')}")
                                 print("="*60)
                             else:
-                                print(f"   ⚠️  Coordination system component not found")
+                                print(f"   [WARN]  Coordination system component not found")
 
                         except Exception as e:
-                            print(f"   ❌ Analyst workflow encountered an error: {e}")
+                            print(f"   [ERR] Analyst workflow encountered an error: {e}")
                             import traceback
                             traceback.print_exc()
                         
                         # Check and display the status of asynchronous tasks
                         await self._check_intervention_tasks_status()
                     else:
-                        print(f"   ⚠️  Opinion balance system not enabled")
+                        print(f"   [WARN]  Opinion balance system not enabled")
                 else:
                     # Remain silent when no trending posts are found
                     pass
@@ -1408,16 +1408,16 @@ Latest comments (chronological):"""
                     result = task.result()
                     if result and result.get("success"):
                         if result.get("intervention_triggered"):
-                            print(f"   ✅ Async intervention task completed - post ID: {post_id}")
+                            print(f"   [OK] Async intervention task completed - post ID: {post_id}")
                             print(f"   📋 Action ID: {result.get('action_id')}")
                             print(f"   🤖 Agent responses: {result.get('total_responses', 0)}")
                         else:
-                            print(f"   ✅ Async analysis complete - post ID: {post_id} (no intervention needed)")
+                            print(f"   [OK] Async analysis complete - post ID: {post_id} (no intervention needed)")
                     else:
-                        print(f"   ⚠️ Async intervention task failed - post ID: {post_id}")
-                        print(f"   ❌ Error: {result.get('error', 'unknown error') if result else 'unknown error'}")
+                        print(f"   [WARN] Async intervention task failed - post ID: {post_id}")
+                        print(f"   [ERR] Error: {result.get('error', 'unknown error') if result else 'unknown error'}")
                 except Exception as e:
-                    print(f"   ❌ Async task exception - post ID: {post_id}: {e}")
+                    print(f"   [ERR] Async task exception - post ID: {post_id}: {e}")
                 
                 completed_tasks.append(i)
             else:
@@ -1626,7 +1626,7 @@ Latest comments (chronological):"""
                     truth_note = f"\n\n[OFFICIAL EXPLANATION] This is the OFFICIAL EXPLANATION corresponding to this post: {real_news}"
                     post.content = post.content + truth_note
                     posts_modified += 1
-                    logging.debug(f"✅ Time step {step + 1}: appended official explanation to trending post {post.post_id} (engagement: {engagement})")
+                    logging.debug(f"[OK] Time step {step + 1}: appended official explanation to trending post {post.post_id} (engagement: {engagement})")
                 
                 modified_feed.add(post)
             
@@ -1705,12 +1705,12 @@ Latest comments (chronological):"""
                         )
                         if update_success:
                             logging.debug(
-                                f"✅ timestep {current_timestep}: appended and saved official explanation to post {post.post_id} "
+                                f"[OK] timestep {current_timestep}: appended and saved official explanation to post {post.post_id} "
                                 f"(engagement: {engagement}, injection_timestep: {injection_timestep})"
                             )
                         else:
                             logging.warning(
-                                f"⚠️ timestep {current_timestep}: failed to save official explanation to database for post {post.post_id}"
+                                f"[WARN] timestep {current_timestep}: failed to save official explanation to database for post {post.post_id}"
                             )
                     except Exception as e:
                         logging.error(f"Error saving official explanation to database for post {post.post_id}: {e}")
@@ -1721,7 +1721,7 @@ Latest comments (chronological):"""
 
             if posts_modified > 0:
                 logging.info(
-                    f"✅ timestep {current_timestep}: appended official explanations to "
+                    f"[OK] timestep {current_timestep}: appended official explanations to "
                     f"{posts_modified} fake news posts"
                 )
 
