@@ -5,6 +5,8 @@ Feed 推荐管道
 """
 
 import logging
+import os
+from datetime import datetime
 from typing import List, Optional
 
 from .types import (
@@ -22,6 +24,33 @@ from .scorers import WeightedScorer, EmbeddingScorer, AuthorDiversityScorer, OON
 from .selectors import TopKSelector
 
 logger = logging.getLogger(__name__)
+
+# 创建专门的推荐算法详细日志记录器
+_pipeline_logger = None
+
+def _get_pipeline_logger():
+    """获取或创建推荐管道详细日志记录器"""
+    global _pipeline_logger
+    if _pipeline_logger is None:
+        # 确保日志目录存在
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs', 'recommender')
+        os.makedirs(log_dir, exist_ok=True)
+
+        # 创建以日期命名的日志文件
+        log_file = os.path.join(log_dir, f'pipeline_{datetime.now().strftime("%Y%m%d")}.log')
+
+        _pipeline_logger = logging.getLogger('recommender.pipeline')
+        _pipeline_logger.setLevel(logging.INFO)
+
+        # 避免重复添加 handler
+        if not _pipeline_logger.handlers:
+            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            file_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(formatter)
+            _pipeline_logger.addHandler(file_handler)
+
+    return _pipeline_logger
 
 
 class FeedPipeline:
@@ -105,38 +134,87 @@ class FeedPipeline:
         Returns:
             Feed 响应
         """
+        pipeline_log = _get_pipeline_logger()
+        start_time = datetime.now()
+
+        # 记录管道开始
+        pipeline_log.info(f"="*60)
+        pipeline_log.info(f"[PIPELINE START] user={request.user_id}, time_step={request.time_step}")
+
         logger.debug(f"Executing feed pipeline for user {request.user_id}")
 
         # 创建管道上下文
         ctx = self._create_context(request)
 
         # Stage 1: Query Hydration
+        stage1_start = datetime.now()
         ctx = self._stage1_query_hydration(ctx)
+        stage1_duration = (datetime.now() - stage1_start).total_seconds()
+        pipeline_log.info(f"[Stage 1: Query Hydration] followed_count={len(ctx.user_context.followed_ids)}, duration={stage1_duration:.3f}s")
         logger.debug(f"Stage 1: User context hydrated, followed={len(ctx.user_context.followed_ids)}")
 
         # Stage 2: Candidate Sources
+        stage2_start = datetime.now()
         ctx = self._stage2_candidate_retrieval(ctx)
+        stage2_duration = (datetime.now() - stage2_start).total_seconds()
+        in_count = ctx.metadata.get('in_network_count', 0)
+        out_count = ctx.metadata.get('out_network_count', 0)
+        neg_count = ctx.metadata.get('negative_news_count', 0)
+        pipeline_log.info(f"[Stage 2: Candidate Retrieval] total={len(ctx.candidates)}, in_network={in_count}, out_network={out_count}, negative_news={neg_count}, duration={stage2_duration:.3f}s")
         logger.debug(f"Stage 2: Retrieved {len(ctx.candidates)} candidates")
 
         # Stage 3: Candidate Hydration
+        stage3_start = datetime.now()
         ctx = self._stage3_data_hydration(ctx)
+        stage3_duration = (datetime.now() - stage3_start).total_seconds()
+        pipeline_log.info(f"[Stage 3: Data Hydration] candidates_hydrated={len(ctx.candidates)}, duration={stage3_duration:.3f}s")
         logger.debug(f"Stage 3: Data hydration complete")
 
         # Stage 4: Pre-Scoring Filters
+        stage4_start = datetime.now()
+        before_filter = len(ctx.candidates)
         ctx = self._stage4_pre_scoring_filter(ctx)
+        stage4_duration = (datetime.now() - stage4_start).total_seconds()
+        filtered_out = before_filter - len(ctx.candidates)
+        pipeline_log.info(f"[Stage 4: Pre-Scoring Filters] before={before_filter}, after={len(ctx.candidates)}, filtered_out={filtered_out}, duration={stage4_duration:.3f}s")
         logger.debug(f"Stage 4: {len(ctx.candidates)} candidates after filtering")
 
         # Stage 5: Scoring
+        stage5_start = datetime.now()
         ctx = self._stage5_scoring(ctx)
+        stage5_duration = (datetime.now() - stage5_start).total_seconds()
+        # 记录评分详情
+        top_scores = []
+        for i, c in enumerate(ctx.candidates[:5]):
+            top_scores.append(f"{c.post_id[:8]}:{c.final_score:.3f}" if c.final_score else f"{c.post_id[:8]}:N/A")
+        pipeline_log.info(f"[Stage 5: Scoring] candidates_scored={len(ctx.candidates)}, top5_scores=[{', '.join(top_scores)}], duration={stage5_duration:.3f}s")
         logger.debug(f"Stage 5: Scoring complete")
 
         # Stage 6: Selection
+        stage6_start = datetime.now()
+        before_selection = len(ctx.candidates)
         ctx = self._stage6_selection(ctx)
+        stage6_duration = (datetime.now() - stage6_start).total_seconds()
+        pipeline_log.info(f"[Stage 6: Selection] before={before_selection}, selected={len(ctx.candidates)}, duration={stage6_duration:.3f}s")
         logger.debug(f"Stage 6: Selected {len(ctx.candidates)} candidates")
 
         # Stage 7: Post-Selection Filters
+        stage7_start = datetime.now()
+        before_post = len(ctx.candidates)
         ctx = self._stage7_post_selection_filter(ctx)
+        stage7_duration = (datetime.now() - stage7_start).total_seconds()
+        post_filtered = before_post - len(ctx.candidates)
+
+        # 检查审核过滤状态
+        import control_flags
+        moderation_status = "enabled" if control_flags.moderation_enabled else "disabled"
+        pipeline_log.info(f"[Stage 7: Post-Selection Filters] before={before_post}, final={len(ctx.candidates)}, filtered={post_filtered}, moderation={moderation_status}, duration={stage7_duration:.3f}s")
         logger.debug(f"Stage 7: Final {len(ctx.candidates)} candidates")
+
+        # 记录管道完成
+        total_duration = (datetime.now() - start_time).total_seconds()
+        pipeline_log.info(f"[PIPELINE END] user={request.user_id}, final_feed_size={len(ctx.candidates)}, total_duration={total_duration:.3f}s")
+        pipeline_log.info(f"")
 
         return self._build_response(ctx)
 

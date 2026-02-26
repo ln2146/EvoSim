@@ -628,6 +628,7 @@ class Simulation:
             step: Current simulation step
         """
         if not self.moderation_service:
+            logging.info(f"🛡️ Time step {step + 1}: moderation service not available")
             return
 
         try:
@@ -645,16 +646,24 @@ class Simulation:
             # Process moderation (can batch multiple posts)
             verdicts = self.moderation_service.check_news_posts(posts_to_check)
 
-            # Log results
-            action_counts = {}
-            for verdict in verdicts:
-                action = verdict.action.value if verdict.action else "none"
-                action_counts[action] = action_counts.get(action, 0) + 1
+            # Log results with detailed information
+            if not verdicts:
+                logging.info(f"🛡️ Time step {step + 1}: moderation complete - no actions taken (service may be disabled or no violations found)")
+            else:
+                action_counts = {}
+                for verdict in verdicts:
+                    action = verdict.action.value if verdict.action else "none"
+                    action_counts[action] = action_counts.get(action, 0) + 1
+                    # 详细记录每个裁决
+                    logging.info(
+                        f"🛡️ Moderation verdict: post={verdict.post_id[:8]}..., "
+                        f"action={action}, severity={verdict.severity.value if verdict.severity else 'N/A'}, "
+                        f"confidence={verdict.confidence:.2f if verdict.confidence else 0}"
+                    )
 
-            if verdicts:
                 logging.info(
                     f"🛡️ Time step {step + 1}: moderation complete - "
-                    f"actions: {action_counts}"
+                    f"total_actions={len(verdicts)}, breakdown: {action_counts}"
                 )
 
         except Exception as e:

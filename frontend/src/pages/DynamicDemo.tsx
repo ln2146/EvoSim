@@ -564,15 +564,14 @@ export default function DynamicDemo() {
           setIsStopping(true)
 
           try {
-            // 调用后端 API 停止进程
-            const response = await fetch('/api/dynamic/stop', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
+            // 使用 axios 发送请求，通过 vite 代理
+            const axios = (await import('axios')).default
+            const response = await axios.post('/api/dynamic/stop', {}, {
+              timeout: 10000, // 10秒超时
+              validateStatus: () => true, // 不抛出HTTP错误
             })
 
-            const data = await response.json()
+            const data = response.data
 
             if (data.success) {
               // 成功：设置 isRunning 为 false，断开 SSE
@@ -591,8 +590,19 @@ export default function DynamicDemo() {
             }
           } catch (error) {
             // 网络错误或其他异常
-            alert(`停止失败：${error instanceof Error ? error.message : '网络错误'}`)
-            console.error('Error stopping dynamic demo:', error)
+            const errorMsg = error instanceof Error ? error.message : '网络错误'
+
+            // 如果是网络错误，可能是后端服务未运行，直接重置状态
+            if (errorMsg.includes('Network Error') || errorMsg.includes('ECONNREFUSED')) {
+              console.warn('Backend service not available, resetting UI state')
+              setIsRunning(false)
+              sse.disconnect()
+              postAnalysis.pauseTracking()
+              alert('后端服务未响应，已重置前端状态')
+            } else {
+              alert(`停止失败：${errorMsg}`)
+              console.error('Error stopping dynamic demo:', error)
+            }
           } finally {
             setIsStopping(false)
           }

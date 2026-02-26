@@ -99,8 +99,9 @@ class ModerationService:
         Returns:
             审核裁决，None 表示不需要干预
         """
-        # NO FALLBACK: Require service to be enabled and provider initialized
-        if not self.config.enabled:
+        # 动态检查 control_flags.moderation_enabled
+        import control_flags
+        if not control_flags.moderation_enabled:
             raise RuntimeError(f"ModerationService is not enabled but check_post() was called for post {post_id}")
         if not self.provider:
             raise RuntimeError(f"ModerationProvider not initialized but check_post() was called for post {post_id}")
@@ -166,8 +167,9 @@ class ModerationService:
         Returns:
             裁决列表
         """
-        # NO FALLBACK: Require service to be enabled and provider initialized
-        if not self.config.enabled:
+        # 动态检查 control_flags.moderation_enabled
+        import control_flags
+        if not control_flags.moderation_enabled:
             raise RuntimeError("ModerationService is not enabled but check_batch() was called")
         if not self.provider:
             raise RuntimeError("ModerationProvider not initialized but check_batch() was called")
@@ -202,7 +204,16 @@ class ModerationService:
         Returns:
             裁决列表
         """
-        if not self.config.enabled:
+        # 动态检查 control_flags.moderation_enabled，而不是静态配置
+        import control_flags
+        is_enabled = control_flags.moderation_enabled
+
+        if not is_enabled:
+            logger.warning(f"⚠️ Moderation service is DISABLED - skipping {len(posts)} posts (set moderation_enabled=True to enable)")
+            return []
+
+        if not self.provider:
+            logger.error(f"❌ Moderation provider not initialized - cannot check posts")
             return []
 
         # 应用互动数阈值
@@ -216,10 +227,10 @@ class ModerationService:
         ]
 
         if not posts_to_check:
-            logger.debug(f"No news posts meet engagement threshold {threshold}")
+            logger.info(f"No news posts meet engagement threshold {threshold} (total posts: {len(posts)})")
             return []
 
-        logger.info(f"Checking {len(posts_to_check)} news posts (threshold={threshold})")
+        logger.info(f"🔍 Moderation checking {len(posts_to_check)} news posts (threshold={threshold})")
         return self.check_batch(posts_to_check)
 
     def _determine_action(self, verdict: ModerationVerdict) -> ModerationAction:
