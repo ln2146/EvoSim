@@ -92,6 +92,19 @@ class OONConfig:
 
 
 @dataclass
+class AuthorCredibilityConfig:
+    """作者信誉评分配置（基于 users.influence_score）"""
+    enabled: bool = True
+    high_credibility_threshold: float = 0.7   # 高信誉阈值
+    low_credibility_threshold: float = 0.3    # 低信誉（疑似水军）阈值
+    high_credibility_boost: float = 1.15      # 高信誉加成 (+15%)
+    low_credibility_penalty: float = 0.75     # 低信誉惩罚 (-25%)
+    default_influence_score: float = 0.5      # 水合失败时的默认值（中性）
+    max_boost_factor: float = 1.3             # 最大加成上限
+    min_penalty_factor: float = 0.5           # 最大惩罚下限
+
+
+@dataclass
 class FilterConfig:
     """
     过滤器配置
@@ -143,6 +156,7 @@ class RecommenderConfig:
     oon: OONConfig = field(default_factory=OONConfig)
     filter: FilterConfig = field(default_factory=FilterConfig)
     selection: SelectionConfig = field(default_factory=SelectionConfig)
+    author_credibility: AuthorCredibilityConfig = field(default_factory=AuthorCredibilityConfig)
 
     @classmethod
     def from_dict(cls, config_dict: Optional[Dict[str, Any]] = None) -> "RecommenderConfig":
@@ -172,6 +186,7 @@ class RecommenderConfig:
             oon=parse_dataclass(OONConfig, config_dict.get('oon')),
             filter=parse_dataclass(FilterConfig, config_dict.get('filter')),
             selection=parse_dataclass(SelectionConfig, config_dict.get('selection')),
+            author_credibility=parse_dataclass(AuthorCredibilityConfig, config_dict.get('author_credibility')),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -187,6 +202,7 @@ class RecommenderConfig:
             'oon': asdict(self.oon),
             'filter': asdict(self.filter),
             'selection': asdict(self.selection),
+            'author_credibility': asdict(self.author_credibility),
         }
 
 
