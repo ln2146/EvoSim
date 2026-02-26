@@ -5,10 +5,16 @@
 """
 
 import logging
+import sys
+import os
 from typing import List, Optional
+
+# Add src to path for importing control_flags and database_manager
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
 from ...moderation.types import ModerationSeverity, ModerationFilterConfig
 from ..types import PostCandidate
+from database_manager import fetch_one
 
 
 logger = logging.getLogger(__name__)
@@ -48,7 +54,11 @@ class ModerationFilter:
         Returns:
             过滤后的候选列表
         """
-        if not self.config.enabled:
+        # Import control_flags here to avoid circular import
+        import control_flags
+
+        # Check both config.enabled and global control_flags.moderation_enabled
+        if not (self.config.enabled or control_flags.moderation_enabled):
             return candidates
 
         apply_degradation = (
@@ -98,14 +108,10 @@ class ModerationFilter:
         Returns:
             是否应用了降级
         """
-        # 检查是否有降级系数
-        degradation_factor = getattr(
-            candidate,
-            'moderation_degradation_factor',
-            None
-        )
+        # Use the moderation_degradation_factor field directly
+        degradation_factor = candidate.moderation_degradation_factor
 
-        if degradation_factor is not None and degradation_factor < 1.0:
+        if degradation_factor < 1.0:
             # 降低最终分数
             candidate.final_score *= degradation_factor
             return True
@@ -122,8 +128,16 @@ class ModerationFilter:
         Returns:
             用户是否被封禁
         """
-        # 这里可以检查候选者的用户状态
-        # 简化实现：如果需要可以从数据库查询
+        try:
+            user = fetch_one(
+                'SELECT status FROM users WHERE user_id = ?',
+                (candidate.author_id,)
+            )
+            if user and user.get('status') == 'banned':
+                return True
+        except Exception as e:
+            logger.debug(f"Error checking ban status for user {candidate.author_id}: {e}")
+
         return False
 
     def get_warning_label(self, post_id: str) -> Optional[str]:
@@ -136,8 +150,16 @@ class ModerationFilter:
         Returns:
             警告标签文字，如果没有则返回 None
         """
-        # 这里可以从数据库查询或从候选对象获取
-        # 简化实现
+        try:
+            post = fetch_one(
+                'SELECT moderation_label FROM posts WHERE post_id = ?',
+                (post_id,)
+            )
+            if post:
+                return post.get('moderation_label')
+        except Exception as e:
+            logger.debug(f"Error getting warning label for post {post_id}: {e}")
+
         return None
 
     def get_degradation_factor(self, severity: ModerationSeverity) -> float:

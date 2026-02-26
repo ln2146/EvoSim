@@ -63,6 +63,10 @@ class PostCandidate(BaseModel):
     author_follower_count: Optional[int] = None
     author_influence_score: Optional[float] = None
 
+    # 审核系统字段（由 moderation 系统写入）
+    moderation_degradation_factor: float = 1.0
+    moderation_label: Optional[str] = None
+
     final_score: float = 0.0           # 最终排序分数
 
     class Config:
@@ -95,6 +99,8 @@ class PostCandidate(BaseModel):
             agent_role=data.get('agent_role'),
             agent_response_type=data.get('agent_response_type'),
             intervention_id=data.get('intervention_id'),
+            moderation_degradation_factor=float(data.get('moderation_degradation_factor') or 1.0),
+            moderation_label=data.get('moderation_label'),
         )
 
     def to_post_dict(self) -> Dict[str, Any]:
@@ -117,6 +123,8 @@ class PostCandidate(BaseModel):
             'agent_role': self.agent_role,
             'agent_response_type': self.agent_response_type,
             'intervention_id': self.intervention_id,
+            'moderation_degradation_factor': self.moderation_degradation_factor,
+            'moderation_label': self.moderation_label,
         }
 
 
