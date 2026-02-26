@@ -262,7 +262,7 @@ class UserManager:
             bar_length = 30
             ratio = min(1.0, follow_count / expected_total)
             filled_length = int(bar_length * ratio)
-            bar = '#' * filled_length + '░' * (bar_length - filled_length)
+            bar = '#' * filled_length + '-' * (bar_length - filled_length)
             percentage = int(ratio * 100)
             print(f"\rFollows Follow creation: [{bar}] {percentage}% ({follow_count}/{expected_total})", end='', flush=True)
             
