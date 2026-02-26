@@ -73,6 +73,11 @@ class EmbeddingManager:
     def _init_local_embedding(self):
         """初始化本地 sentence-transformers 模型"""
         try:
+            import os
+            # 设置 HuggingFace 镜像（中国大陆网络优化）
+            if 'HF_ENDPOINT' not in os.environ:
+                os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+
             from sentence_transformers import SentenceTransformer
             self._local_model = SentenceTransformer(self.model_name)
             logger.info(f"EmbeddingManager initialized with local model: {self.model_name}")
