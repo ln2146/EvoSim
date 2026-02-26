@@ -213,27 +213,6 @@ class DefenseCoordinator:
         self.evolution_engine = EvolutionEngine()
         self.active_agents: Dict[str, DefenseAgentType] = {}
     
-    def deploy_agents(
-        self,
-        total_count: int,
-        context: Dict[str, Any]
-    ) -> Dict[DefenseAgentType, int]:
-        """Deploy agents"""
-        strategy = self.evolution_engine.allocation_strategy
-        allocation = strategy.get_allocation(total_count)
-        
-        # Fine-tune based on context
-        anger = context.get("anger_level", 0.5)
-        misinfo = context.get("misinformation_risk", 0.5)
-        viral = context.get("viral_potential", 0.5)
-        vacuum = context.get("discussion_vacuum", 0.5)
-        
-        recommended = get_recommended_agent_type(anger, misinfo, viral, vacuum)
-        # Increase count of recommended type
-        allocation[recommended] = allocation.get(recommended, 0) + 1
-        
-        return allocation
-    
     def select_agent_for_situation(
         self,
         context: Dict[str, Any]

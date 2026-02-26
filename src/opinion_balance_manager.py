@@ -168,7 +168,7 @@ class OpinionBalanceManager:
                 }
                 
                 # Trigger intervention
-                intervention_result = await self._trigger_intervention(post_id, content, user_id, alert)
+                intervention_result = await self._trigger_intervention(post_id, content, alert)
                 return intervention_result
            
             # Use the Analyst Agent to analyze the content
@@ -202,7 +202,7 @@ class OpinionBalanceManager:
                 logging.info(f"Detected content requiring intervention - Post ID: {post_id}, Extremism level: {analysis['extremism_level']}")
 
                 # Trigger intervention
-                intervention_result = await self._trigger_intervention(post_id, content, user_id, alert)
+                intervention_result = await self._trigger_intervention(post_id, content, alert)
                 return intervention_result
             else:
                 logging.debug(f"Post {post_id} does not require intervention - Extremism level: {analysis['extremism_level']}")
@@ -232,7 +232,6 @@ class OpinionBalanceManager:
         self,
         original_post_id: str,
         content: str,
-        original_user_id: str,
         alert: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Trigger an opinion balance intervention using the full three-phase workflow."""

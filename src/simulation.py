@@ -351,7 +351,7 @@ class Simulation:
                 # Allow each user to attempt posting while enforcing limits
                 post_tasks = []
                 for i, user in enumerate(self.users):
-                    task = self._async_user_post_creation(user, step, i)
+                    task = self._async_user_post_creation(user, step)
                     post_tasks.append(task)
 
                 # Execute all post-creation tasks concurrently
@@ -373,7 +373,7 @@ class Simulation:
                     setattr(user, 'current_time_step', step)
                 except Exception:
                     pass
-                task = self._async_user_reaction(user, step, i)
+                task = self._async_user_reaction(user, step)
                 reaction_tasks.append(task)
             
             # Run all user reaction tasks in parallel
@@ -441,6 +441,30 @@ class Simulation:
                 logging.debug(f"📊 Time step {step + 1} complete - post count: {current_post_count}/{max_posts}")
 
             logging.info("")  # Add a newline for readability between time steps
+
+        # Stop the opinion balance background monitoring task
+        if opinion_balance_task and not opinion_balance_task.done():
+            opinion_balance_task.cancel()
+            try:
+                await opinion_balance_task
+            except asyncio.CancelledError:
+                print(f"🔍 Opinion balance background monitoring stopped")
+
+        # Wait for the opinion balance monitor to complete (only when feedback system is enabled)
+        if (self.opinion_balance_manager and self.opinion_balance_manager.enabled and
+            self.config.get('opinion_balance_system', {}).get('feedback_system_enabled', False)):
+            await self._wait_for_monitoring_completion()
+
+        # Print the simulation statistics
+        logging.info("\nSimulation complete. Printing statistics...")
+        Utils.print_simulation_stats(self.conn)
+
+        # Then save and close the database as the last step
+        self.db_manager.save_simulation_db(timestamp=self.timestamp)
+
+        # Run homophily analysis after simulation completes
+        homophily_analyzer = HomophilyAnalysis(self.db_path)
+        homophily_analyzer.run_analysis(output_dir=f"experiment_outputs/homophily_analysis/{self.timestamp}")
 
     async def _run_malicious_batch_attack(self, step: int):
         """Run malicious bot batch attack around the middle of each timestep."""
@@ -689,31 +713,7 @@ class Simulation:
             logging.error(f"Error getting posts for moderation: {e}")
             return []
 
-        # Stop the opinion balance background monitoring task
-        if opinion_balance_task and not opinion_balance_task.done():
-            opinion_balance_task.cancel()
-            try:
-                await opinion_balance_task
-            except asyncio.CancelledError:
-                print(f"🔍 Opinion balance background monitoring stopped")
-
-        # Wait for the opinion balance monitor to complete (only when feedback system is enabled)
-        if (self.opinion_balance_manager and self.opinion_balance_manager.enabled and
-            self.config.get('opinion_balance_system', {}).get('feedback_system_enabled', False)):
-            await self._wait_for_monitoring_completion()
-
-        # Print the simulation statistics
-        logging.info("\nSimulation complete. Printing statistics...")
-        Utils.print_simulation_stats(self.conn)
-
-        # Then save and close the database as the last step
-        self.db_manager.save_simulation_db(timestamp=self.timestamp)
-
-        # Run homophily analysis after simulation completes
-        homophily_analyzer = HomophilyAnalysis(self.db_path)
-        homophily_analyzer.run_analysis(output_dir=f"experiment_outputs/homophily_analysis/{self.timestamp}")
-
-    async def _async_user_post_creation(self, user, step, user_index):
+    async def _async_user_post_creation(self, user, step):
         """Async user post creation helper with simplified limit checks"""
         try:
             # Let user decide whether to post based on news, identity, and memory
@@ -748,7 +748,7 @@ class Simulation:
         cursor.execute("SELECT COUNT(*) FROM posts WHERE original_post_id IS NULL")
         return cursor.fetchone()[0]
 
-    async def _async_user_reaction(self, user, step, user_index):
+    async def _async_user_reaction(self, user, step):
         """Async user reaction handler"""
         try:
             # User reacts to their feed — even in fact-check mode, show the full feed (including user posts)

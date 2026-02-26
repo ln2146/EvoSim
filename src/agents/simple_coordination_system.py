@@ -27,20 +27,6 @@ except Exception:
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'database'))
 try:
     from database_manager import get_db_manager, execute_query, fetch_one, fetch_all, execute_transaction, execute_with_temp_connection
-    # Import dynamic like increment module
-    try:
-        import sys
-        import os
-        src_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        if src_path not in sys.path:
-            sys.path.insert(0, src_path)
-        from dynamic_like_increment import calculate_dynamic_like_increment, apply_like_increment_to_comments
-    except ImportError:
-        # If import fails, define no-op functions
-        def calculate_dynamic_like_increment(conn, current_timestep=None):
-            return 0
-        def apply_like_increment_to_comments(conn, comment_ids, increment, context=""):
-            return 0
 except ImportError:
     try:
         # If import fails, try relative import
@@ -9406,7 +9392,7 @@ Please return the evaluation result in JSON format:
                 return 0
             
             if result and result > 0:
-                self._verify_leader_comment_likes(leader_comment_id, result)
+                self._verify_leader_comment_likes(leader_comment_id)
 
             return result or 0
 
@@ -9414,7 +9400,7 @@ Please return the evaluation result in JSON format:
             workflow_logger.info(f"❌ amplifier Agent like operation failed: {e}")
             return 0
 
-    def _verify_leader_comment_likes(self, leader_comment_id: str, expected_likes: int):
+    def _verify_leader_comment_likes(self, leader_comment_id: str):
         """Verify leader comment likes increased correctly"""
         try:
             

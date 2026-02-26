@@ -250,14 +250,3 @@ def convert_old_role_to_new(old_role: str) -> str:
         "general": "empath"
     }
     return mapping.get(old_role, "empath")
-
-
-# Compatibility interface for existing code
-def get_legacy_role_distribution(new_distribution: Dict[str, int]) -> Dict[str, int]:
-    """Convert new role distribution to legacy format"""
-    return {
-        "empath": new_distribution.get("empath", 0),
-        "fact_checker": new_distribution.get("fact_checker", 0),
-        "amplifier": new_distribution.get("amplifier", 0),
-        "niche_filler": new_distribution.get("niche_filler", 0)
-    }
