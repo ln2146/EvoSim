@@ -6,7 +6,14 @@
       "Bash(pip install:*)",
       "Bash(cmd:*)",
       "Bash(E:/anaconda3/envs/EvoCorps/python.exe:*)",
-      "Bash(conda run:*)"
+      "Bash(conda run:*)",
+      "Bash(\"E:/Anaconda_envs/envs/EvoCorps/python.exe\":*)",
+      "Bash(E:/Anaconda_envs/envs/EvoCorps/python.exe:*)",
+      "Bash(set PYTHONIOENCODING=utf-8:*)",
+      "Bash(sed:*)",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx:*)"
     ]
   }
 }
