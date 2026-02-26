@@ -10,11 +10,19 @@ import os
 from typing import List, Optional
 
 # Add src to path for importing control_flags and database_manager
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+_src_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if _src_path not in sys.path:
+    sys.path.insert(0, _src_path)
 
-from ...moderation.types import ModerationSeverity, ModerationFilterConfig
+# Use try/except for imports to handle different execution contexts
+try:
+    from ...moderation.types import ModerationSeverity, ModerationFilterConfig
+except (ImportError, ValueError):
+    # Fall back to absolute import
+    from moderation.types import ModerationSeverity, ModerationFilterConfig
+
 from ..types import PostCandidate
-from database_manager import fetch_one
+from database.database_manager import fetch_one
 
 
 logger = logging.getLogger(__name__)
