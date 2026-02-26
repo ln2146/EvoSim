@@ -197,17 +197,7 @@ class UserManager:
         try:
             configs = self.load_agent_configs()
             total_users = len(configs)
-            print(f"Users Creating {total_users} users...")
-            
             for i, user_config in enumerate(configs, 1):
-                # Display the progress bar
-                progress = i / total_users
-                bar_length = 30
-                filled_length = int(bar_length * progress)
-                bar = '#' * filled_length + '-' * (bar_length - filled_length)
-                percentage = int(progress * 100)
-                print(f"\rUsers User creation progress: [{bar}] {percentage}% ({i}/{total_users})", end='', flush=True)
-                
                 user_id = Utils.generate_formatted_id("user")
                 self.db_manager.add_user(user_id, user_config)
                 user = AgentUser(
@@ -218,11 +208,7 @@ class UserManager:
                     db_connection=self.db_manager.get_connection()
                 )
                 users.append(user)
-            
-            # Finalize the progress bar
-            print(f"\rUsers User creation progress: [{'#' * 30}] 100% ({total_users}/{total_users})")
-            print()  # newline
-            
+
             cursor = self.conn.execute("SELECT COUNT(*) FROM users")
             count = cursor.fetchone()[0]
             print(f"[OK] Successfully created {count} users")
@@ -258,14 +244,6 @@ class UserManager:
         expected_total = m0 * (m0 - 1) + (len(remaining_users) * m if m > 0 else 0)
         expected_total = max(expected_total, 1)  # Avoid division by zero
 
-        def _print_progress():
-            bar_length = 30
-            ratio = min(1.0, follow_count / expected_total)
-            filled_length = int(bar_length * ratio)
-            bar = '#' * filled_length + '-' * (bar_length - filled_length)
-            percentage = int(ratio * 100)
-            print(f"\rFollows Follow creation: [{bar}] {percentage}% ({follow_count}/{expected_total})", end='', flush=True)
-            
         # Step 1: Create initial connected network with m0 nodes
         initial_users = self.users[:m0]
         for i, user in enumerate(initial_users):
@@ -274,7 +252,6 @@ class UserManager:
                 user.follow_user(other_user.user_id)
                 other_user.follow_user(user.user_id)
                 follow_count += 2  # Each pair creates 2 follows
-                _print_progress()
         
         # Step 2: Add remaining nodes with preferential attachment
         if m > 0:  # Only proceed if we have parameters for preferential attachment
@@ -319,12 +296,7 @@ class UserManager:
                 for user_id in users_to_follow:
                     new_user.follow_user(user_id)
                     follow_count += 1
-                    _print_progress()
 
-        # Complete the progress bar (overwrite the line and add newline)
-        print(f"\rFollows Follow creation: [{'#' * 30}] 100% ({follow_count}/{expected_total})")
-        print()  # newline
-        
         print(f"[OK] Created {follow_count} follow relationships")
         
     def add_random_users(self, num_users_to_add: int = 1, follow_probability: float = 0.0):
