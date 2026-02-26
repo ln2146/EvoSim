@@ -3,7 +3,10 @@
     "allow": [
       "Bash(git:*)",
       "Bash(python:*)",
-      "Bash(pip install:*)"
+      "Bash(pip install:*)",
+      "Bash(cmd:*)",
+      "Bash(E:/anaconda3/envs/EvoCorps/python.exe:*)",
+      "Bash(conda run:*)"
     ]
   }
 }
