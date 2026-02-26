@@ -180,7 +180,7 @@ class AgentUser:
             self.selected_model = get_random_model()
             # Removed verbose model selection logging
         except ImportError as e:
-            print(f"⚠️ Multi-model selector import failed: {e}, using default model")
+            print(f"[WARN] Multi-model selector import failed: {e}, using default model")
             self.multi_model_selector = None
             from multi_model_selector import MultiModelSelector
             self.selected_model = MultiModelSelector.DEFAULT_POOL[0]
@@ -212,7 +212,7 @@ class AgentUser:
             
             # Keep temperature within a reasonable range
             self.temperature = max(0.3, min(1.0, base_temp))
-            print(f"🌡️ User {user_id} ({persona_type}) temperature set to: {self.temperature}")
+            print(f"[TMP] User {user_id} ({persona_type}) temperature set to: {self.temperature}")
         else:
             self.temperature = temperature
 
@@ -326,7 +326,7 @@ class AgentUser:
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (post_id, content, self.user_id, is_news, news_type, status))
                 if success:
-                    print(f"⚠️ User {self.user_id} created post using compatibility mode")
+                    print(f"[WARN] User {self.user_id} created post using compatibility mode")
                 else:
                     logging.warning(f"Skipping post creation due to database connection issue, returning dummy post_id")
                     return post_id
@@ -473,7 +473,7 @@ class AgentUser:
                     VALUES (?, ?, ?, ?, ?, ?)
                 ''', (comment_id, final_content, post_id, self.user_id, datetime.now().isoformat(), 0))
                 if success:
-                    print(f"⚠️ User {self.user_id} created comment using compatibility mode")
+                    print(f"[WARN] User {self.user_id} created comment using compatibility mode")
                 else:
                     return None
         except Exception as e:
@@ -705,7 +705,7 @@ Your comment:"""
         except Exception as e:
             error_str = str(e)
             if "rate_limit" in error_str.lower() or "429" in error_str:
-                logging.warning(f"⚠️ User {self.user_id} hit rate limit generating comment; model {engine} temporarily unavailable")
+                logging.warning(f"[WARN] User {self.user_id} hit rate limit generating comment; model {engine} temporarily unavailable")
                 return "I'm having some technical issues right now."
             else:
                 logging.error(f"Comment generation failed: {e}")
@@ -959,12 +959,12 @@ Your comment:"""
                 # Check if content is too similar to recent posts (dedupe)
                 if self._check_content_similarity(post_content):
                     if attempt < max_retries - 1:
-                        logging.info(f"⚠️ User {self.user_id} generated content similar to existing posts, regenerating (attempt {attempt+1}/{max_retries})")
+                        logging.info(f"[WARN] User {self.user_id} generated content similar to existing posts, regenerating (attempt {attempt+1}/{max_retries})")
                         # Increase temperature to boost diversity
                         temperature_to_use = min(1.0, temperature_to_use + 0.1)
                         continue
                     else:
-                        logging.warning(f"⚠️ User {self.user_id} repeatedly generated similar content, accepting current version")
+                        logging.warning(f"[WARN] User {self.user_id} repeatedly generated similar content, accepting current version")
 
                 if not summary:
                     summary = _fallback_summary(post_content)
@@ -978,7 +978,7 @@ Your comment:"""
             except Exception as e:
                 error_str = str(e)
                 if "rate_limit" in error_str.lower() or "429" in error_str:
-                    logging.warning(f"⚠️ User {self.user_id} hit rate limit; model {actual_engine} temporarily unavailable")
+                    logging.warning(f"[WARN] User {self.user_id} hit rate limit; model {actual_engine} temporarily unavailable")
                     # For rate limits, return a short fallback instead of error
                     fallback_text = "I'm experiencing some technical difficulties right now."
                     return {"content": fallback_text, "summary": _fallback_summary(fallback_text)}
@@ -2948,7 +2948,7 @@ Task:
                             self.comment_count += 1
                             logging.info(f"💬 User {self.user_id} commented on post {target}: {content}")
                         else:
-                            logging.warning(f"⚠️ User {self.user_id} reached comment limit, skipping comment")
+                            logging.warning(f"[WARN] User {self.user_id} reached comment limit, skipping comment")
                     elif action == 'add-note':
                         self.add_community_note(target, content)
                         logging.info(f"📝 User {self.user_id} added note to post {target}: {content}")

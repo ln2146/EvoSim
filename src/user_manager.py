@@ -197,7 +197,7 @@ class UserManager:
         try:
             configs = self.load_agent_configs()
             total_users = len(configs)
-            print(f"👥 Creating {total_users} users...")
+            print(f"Users Creating {total_users} users...")
             
             for i, user_config in enumerate(configs, 1):
                 # Display the progress bar
@@ -206,7 +206,7 @@ class UserManager:
                 filled_length = int(bar_length * progress)
                 bar = '█' * filled_length + '░' * (bar_length - filled_length)
                 percentage = int(progress * 100)
-                print(f"\r👥 User creation progress: [{bar}] {percentage}% ({i}/{total_users})", end='', flush=True)
+                print(f"\rUsers User creation progress: [{bar}] {percentage}% ({i}/{total_users})", end='', flush=True)
                 
                 user_id = Utils.generate_formatted_id("user")
                 self.db_manager.add_user(user_id, user_config)
@@ -220,12 +220,12 @@ class UserManager:
                 users.append(user)
             
             # Finalize the progress bar
-            print(f"\r👥 User creation progress: [{'█' * 30}] 100% ({total_users}/{total_users})")
+            print(f"\rUsers User creation progress: [{'█' * 30}] 100% ({total_users}/{total_users})")
             print()  # newline
             
             cursor = self.conn.execute("SELECT COUNT(*) FROM users")
             count = cursor.fetchone()[0]
-            print(f"✅ Successfully created {count} users")
+            print(f"[OK] Successfully created {count} users")
             
         except Exception as e:
             logging.error(f"Error creating users: {str(e)}")
@@ -251,7 +251,7 @@ class UserManager:
         
         follow_count = 0
         total_users = len(self.users)
-        print(f"🔗 Building user follow relationships...")
+        print(f"Follows Building user follow relationships...")
 
         # Estimate the number of follow edges to create
         remaining_users = self.users[m0:]
@@ -264,7 +264,7 @@ class UserManager:
             filled_length = int(bar_length * ratio)
             bar = '█' * filled_length + '░' * (bar_length - filled_length)
             percentage = int(ratio * 100)
-            print(f"\r🔗 Follow creation: [{bar}] {percentage}% ({follow_count}/{expected_total})", end='', flush=True)
+            print(f"\rFollows Follow creation: [{bar}] {percentage}% ({follow_count}/{expected_total})", end='', flush=True)
             
         # Step 1: Create initial connected network with m0 nodes
         initial_users = self.users[:m0]
@@ -322,10 +322,10 @@ class UserManager:
                     _print_progress()
 
         # Complete the progress bar (overwrite the line and add newline)
-        print(f"\r🔗 Follow creation: [{'█' * 30}] 100% ({follow_count}/{expected_total})")
+        print(f"\rFollows Follow creation: [{'█' * 30}] 100% ({follow_count}/{expected_total})")
         print()  # newline
         
-        print(f"✅ Created {follow_count} follow relationships")
+        print(f"[OK] Created {follow_count} follow relationships")
         
     def add_random_users(self, num_users_to_add: int = 1, follow_probability: float = 0.0):
         """Add new random users to the simulation with balanced persona distribution."""
@@ -349,7 +349,7 @@ class UserManager:
         self.users.extend(new_users)
 
         # recordlog
-        logging.info(f"✅ Added {len(new_users)} users to the simulation (total users: {len(self.users)})")
+        logging.info(f"[OK] Added {len(new_users)} users to the simulation (total users: {len(self.users)})")
 
         # Log the distribution of new user classes
         self._log_new_users_distribution(new_users)
@@ -485,7 +485,7 @@ class UserManager:
         current_total = len(self.users)
         growth_multiple = current_total / initial_users
 
-        logging.info(f"📊 User growth statistics:")
+        logging.info(f"[STATS] User growth statistics:")
         logging.info(f"   Initial user count: {initial_users}")
         logging.info(f"   Current user count: {current_total}")
         logging.info(f"   Users added this round: {new_users_count}")
