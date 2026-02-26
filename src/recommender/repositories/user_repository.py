@@ -110,6 +110,41 @@ class UserRepository:
                 return []
             raise
 
+    def get_author_profiles_batch(self, author_ids: List[str]) -> Dict[str, Dict]:
+        """
+        批量获取作者的粉丝数与信誉分
+
+        单次 IN 查询，避免 N+1 问题。
+
+        Args:
+            author_ids: 作者 ID 列表
+
+        Returns:
+            {author_id: {'follower_count': int, 'influence_score': float}}
+            数据库不可用时返回 {}
+        """
+        if not author_ids:
+            return {}
+        placeholders = ','.join('?' * len(author_ids))
+        query = f'''
+            SELECT user_id, follower_count, influence_score
+            FROM users
+            WHERE user_id IN ({placeholders})
+        '''
+        try:
+            rows = fetch_all(query, tuple(author_ids)) or []
+            return {
+                str(r['user_id']): {
+                    'follower_count': r['follower_count'] or 0,
+                    'influence_score': r['influence_score'] or 0.0,
+                }
+                for r in rows
+            }
+        except Exception as e:
+            if "unable to open database file" in str(e):
+                return {}
+            raise
+
     def get_blocked_users(self, user_id: str) -> Set[str]:
         """
         获取用户屏蔽的用户列表
@@ -122,8 +157,11 @@ class UserRepository:
         Returns:
             屏蔽的用户 ID 集合
         """
-        # 如果有 blocked_users 表，可以查询
-        # 当前返回空集合
+        # TODO: 激活路径——建表 blocked_users(blocker_id, blocked_id)，
+        #       然后将此处替换为:
+        #         query = 'SELECT blocked_id FROM blocked_users WHERE blocker_id = ?'
+        #         rows = fetch_all(query, (user_id,)) or []
+        #         return {str(r['blocked_id']) for r in rows}
         return set()
 
     def get_muted_keywords(self, user_id: str) -> List[str]:
@@ -138,6 +176,9 @@ class UserRepository:
         Returns:
             屏蔽的关键词列表
         """
-        # 如果有 muted_keywords 表，可以查询
-        # 当前返回空列表
+        # TODO: 激活路径——建表 muted_keywords(user_id, keyword)，
+        #       然后将此处替换为:
+        #         query = 'SELECT keyword FROM muted_keywords WHERE user_id = ?'
+        #         rows = fetch_all(query, (user_id,)) or []
+        #         return [r['keyword'] for r in rows]
         return []
