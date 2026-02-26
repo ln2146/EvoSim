@@ -241,8 +241,10 @@ class FeedPipeline:
         """阶段7: 后选择过滤"""
         ctx.candidates = self.post_selection_filters.filter(ctx.candidates)
 
-        # Apply moderation filter (if enabled)
-        ctx.candidates = self.moderation_filter.filter(ctx.candidates)
+        # Apply moderation filter (if enabled via control_flags)
+        import control_flags
+        if control_flags.moderation_enabled:
+            ctx.candidates = self.moderation_filter.filter(ctx.candidates)
 
         return ctx
 

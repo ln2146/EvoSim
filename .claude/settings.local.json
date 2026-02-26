@@ -15,7 +15,14 @@
       "Bash(npx tsc:*)",
       "Bash(npx:*)",
       "Bash(taskkill:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(netstat:*)",
+      "Bash(curl:*)",
+      "Bash(powershell:*)",
+      "Bash(findstr \":5001.*LISTENING\")",
+      "Bash(while read pid)",
+      "Bash(do taskkill /F /PID $pid)",
+      "Bash(done)"
     ]
   }
 }

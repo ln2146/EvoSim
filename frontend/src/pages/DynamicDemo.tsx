@@ -694,11 +694,18 @@ export default function DynamicDemo() {
             const result = await setModerationFlag(!enableModeration)
             if (result && 'moderation_enabled' in result) {
               setEnableModeration(result.moderation_enabled)
+
+              // 显示成功提示
+              if (result.moderation_enabled) {
+                alert('✅ 内容审核已开启')
+              } else {
+                alert('✅ 内容审核已关闭')
+              }
             } else {
               throw new Error('API 返回异常')
             }
           } catch (error) {
-            alert(`操作失败：${error instanceof Error ? error.message : '网络错误'}`)
+            alert(`❌ 操作失败：${error instanceof Error ? error.message : '网络错误'}`)
             console.error('Error toggling moderation:', error)
           } finally {
             setIsTogglingModeration(false)

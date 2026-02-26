@@ -4048,13 +4048,17 @@ def event_stream():
 
 
 if __name__ == '__main__':
+    import sys
+    # Allow port to be specified via command line
+    port = int(sys.argv[1]) if len(sys.argv) > 1 else 5001
+
     print("=" * 60)
     print("🚀 Starting EvoCorps Frontend API Server...")
     print("=" * 60)
     print(f"📁 Database directory: {os.path.abspath(DATABASE_DIR)}")
-    print(f"🌐 Server running at: http://127.0.0.1:5001")
+    print(f"🌐 Server running at: http://127.0.0.1:{port}")
     print(f"🤖 AI Module Status: {'✅ ENABLED' if AI_AVAILABLE else '⚠️ DISABLED (using template answers)'}")
     print("=" * 60)
     print("Press Ctrl+C to stop")
     print()
-    app.run(host='127.0.0.1', port=5001, debug=False, use_reloader=False)
+    app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False)
