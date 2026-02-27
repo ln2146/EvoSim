@@ -109,6 +109,19 @@ class ModerationService:
 
         logger.info(f"ModerationService initialized (enabled={self.config.enabled})")
 
+    def _ensure_provider_initialized(self):
+        """
+        惰性初始化 Provider。
+
+        当 control_flags.moderation_enabled 在服务创建后才被打开时，
+        self.provider 仍为 None（因为初始化时 config.enabled=False）。
+        调用此方法可在运行时补全初始化，保证审核功能正常启动。
+        """
+        if self.provider is not None:
+            return
+        self.provider = CompositeProvider(self.config)
+        logger.info("Composite moderation provider lazily initialized (control_flags enabled after service creation)")
+
     def check_post(
         self,
         post_id: str,
@@ -133,7 +146,7 @@ class ModerationService:
         if not control_flags.moderation_enabled:
             raise RuntimeError(f"ModerationService is not enabled but check_post() was called for post {post_id}")
         if not self.provider:
-            raise RuntimeError(f"ModerationProvider not initialized but check_post() was called for post {post_id}")
+            self._ensure_provider_initialized()
 
         mod_log = _get_moderation_logger()
         content_preview = (content or '').replace('\n', ' ')[:80]
@@ -231,7 +244,7 @@ class ModerationService:
         if not control_flags.moderation_enabled:
             raise RuntimeError("ModerationService is not enabled but check_batch() was called")
         if not self.provider:
-            raise RuntimeError("ModerationProvider not initialized but check_batch() was called")
+            self._ensure_provider_initialized()
 
         mod_log = _get_moderation_logger()
         mod_log.info(f"[BATCH_START] posts_to_check={len(posts)}")
@@ -284,8 +297,7 @@ class ModerationService:
             return []
 
         if not self.provider:
-            logger.error(f"❌ Moderation provider not initialized - cannot check posts")
-            return []
+            self._ensure_provider_initialized()
 
         # 应用互动数阈值
         threshold = min_engagement or self.config.check_threshold_engagement

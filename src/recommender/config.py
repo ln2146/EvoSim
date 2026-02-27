@@ -43,6 +43,7 @@ class DiversityConfig:
     """
     enabled: bool = True
     penalty_factor: float = 0.7   # 同作者后续帖子的折扣系数
+    min_penalty: float = 0.1      # 惩罚下限，防止分数完全归零
     max_same_author: int = 3      # 同一作者最多出现次数
 
 
