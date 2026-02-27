@@ -72,43 +72,22 @@ class EmbeddingManager:
 
     def _init_local_embedding(self):
         """初始化本地 sentence-transformers 模型"""
-        try:
-            import os
-            # 设置 HuggingFace 镜像（中国大陆网络优化）
-            if 'HF_ENDPOINT' not in os.environ:
-                os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
+        import os
+        # 设置 HuggingFace 镜像（中国大陆网络优化）
+        if 'HF_ENDPOINT' not in os.environ:
+            os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
-            from sentence_transformers import SentenceTransformer
-            self._local_model = SentenceTransformer(self.model_name)
-            logger.info(f"EmbeddingManager initialized with local model: {self.model_name}")
-        except ImportError:
-            logger.warning(
-                "sentence-transformers not installed. "
-                "Run: pip install sentence-transformers"
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize local embedding model: {e}")
+        from sentence_transformers import SentenceTransformer
+        self._local_model = SentenceTransformer(self.model_name)
+        logger.info(f"EmbeddingManager initialized with local model: {self.model_name}")
 
     def _init_openai_embedding(self):
         """初始化 OpenAI Embedding 客户端"""
-        try:
-            from multi_model_selector import multi_model_selector
-            self._openai_client, self._openai_model = multi_model_selector.create_embedding_client(
-                model_name=self.openai_model_name
-            )
-            logger.info(f"EmbeddingManager initialized with OpenAI model: {self._openai_model}")
-        except ImportError:
-            logger.warning(
-                "multi_model_selector not available. "
-                "Falling back to local embedding."
-            )
-            self.use_openai_embedding = False
-            self._init_local_embedding()
-        except Exception as e:
-            logger.error(f"Failed to initialize OpenAI embedding: {e}")
-            logger.info("Falling back to local embedding.")
-            self.use_openai_embedding = False
-            self._init_local_embedding()
+        from multi_model_selector import multi_model_selector
+        self._openai_client, self._openai_model = multi_model_selector.create_embedding_client(
+            model_name=self.openai_model_name
+        )
+        logger.info(f"EmbeddingManager initialized with OpenAI model: {self._openai_model}")
 
     def encode_text(self, text: str) -> Optional[List[float]]:
         """
@@ -130,32 +109,24 @@ class EmbeddingManager:
         else:
             return self._encode_with_local(text)
 
-    def _encode_with_local(self, text: str) -> Optional[List[float]]:
+    def _encode_with_local(self, text: str) -> List[float]:
         """使用本地模型编码"""
         if not self._local_model:
-            return None
+            raise RuntimeError("Local embedding model not initialized")
 
-        try:
-            embedding = self._local_model.encode(text, convert_to_numpy=True)
-            return embedding.tolist()
-        except Exception as e:
-            logger.error(f"Failed to encode text with local model: {e}")
-            return None
+        embedding = self._local_model.encode(text, convert_to_numpy=True)
+        return embedding.tolist()
 
-    def _encode_with_openai(self, text: str) -> Optional[List[float]]:
+    def _encode_with_openai(self, text: str) -> List[float]:
         """使用 OpenAI API 编码"""
         if not self._openai_client:
-            return None
+            raise RuntimeError("OpenAI embedding client not initialized")
 
-        try:
-            response = self._openai_client.embeddings.create(
-                input=text,
-                model=self._openai_model
-            )
-            return response.data[0].embedding
-        except Exception as e:
-            logger.error(f"Failed to encode text with OpenAI: {e}")
-            return None
+        response = self._openai_client.embeddings.create(
+            input=text,
+            model=self._openai_model
+        )
+        return response.data[0].embedding
 
     def get_or_compute_embedding(
         self,

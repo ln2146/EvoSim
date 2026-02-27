@@ -34,18 +34,14 @@ class EmbeddingScorer:
 
     def _init_embedding_manager(self):
         """延迟初始化 EmbeddingManager"""
-        try:
-            from ..embedding.embedding_manager import EmbeddingManager
-            self.embedding_manager = EmbeddingManager(
-                model_name=self.config.model_name,
-                cache_embeddings=self.config.cache_embeddings,
-                max_cache_size=self.config.max_cache_size,
-                use_openai_embedding=self.config.use_openai_embedding,
-                openai_model_name=self.config.openai_model_name
-            )
-        except ImportError:
-            # 依赖未安装
-            self.embedding_manager = None
+        from ..embedding.embedding_manager import EmbeddingManager
+        self.embedding_manager = EmbeddingManager(
+            model_name=self.config.model_name,
+            cache_embeddings=self.config.cache_embeddings,
+            max_cache_size=self.config.max_cache_size,
+            use_openai_embedding=self.config.use_openai_embedding,
+            openai_model_name=self.config.openai_model_name
+        )
 
     def score(
         self,
@@ -109,15 +105,12 @@ class EmbeddingScorer:
         Returns:
             相似度 [-1, 1]
         """
-        try:
-            import numpy as np
-            a_arr = np.array(a)
-            b_arr = np.array(b)
-            dot_product = np.dot(a_arr, b_arr)
-            norm_a = np.linalg.norm(a_arr)
-            norm_b = np.linalg.norm(b_arr)
-            if norm_a == 0 or norm_b == 0:
-                return 0.0
-            return float(dot_product / (norm_a * norm_b))
-        except Exception:
+        import numpy as np
+        a_arr = np.array(a)
+        b_arr = np.array(b)
+        dot_product = np.dot(a_arr, b_arr)
+        norm_a = np.linalg.norm(a_arr)
+        norm_b = np.linalg.norm(b_arr)
+        if norm_a == 0 or norm_b == 0:
             return 0.0
+        return float(dot_product / (norm_a * norm_b))

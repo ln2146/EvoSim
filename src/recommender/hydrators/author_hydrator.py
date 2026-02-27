@@ -39,21 +39,18 @@ class AuthorHydrator:
         if not candidates:
             return candidates
 
-        try:
-            author_ids = list({c.author_id for c in candidates if c.author_id})
-            profiles = self.user_repo.get_author_profiles_batch(author_ids)
+        author_ids = list({c.author_id for c in candidates if c.author_id})
+        profiles = self.user_repo.get_author_profiles_batch(author_ids)
 
-            for candidate in candidates:
-                profile = profiles.get(candidate.author_id)
-                if profile:
-                    candidate.author_follower_count = profile['follower_count']
-                    candidate.author_influence_score = profile['influence_score']
+        for candidate in candidates:
+            profile = profiles.get(candidate.author_id)
+            if profile:
+                candidate.author_follower_count = profile['follower_count']
+                candidate.author_influence_score = profile['influence_score']
 
-            logger.debug(
-                f"AuthorHydrator: hydrated {len(candidates)} candidates "
-                f"from {len(profiles)} author profiles"
-            )
-        except Exception as e:
-            logger.warning(f"AuthorHydrator: degrading silently due to error: {e}")
+        logger.debug(
+            f"AuthorHydrator: hydrated {len(candidates)} candidates "
+            f"from {len(profiles)} author profiles"
+        )
 
         return candidates
