@@ -127,6 +127,39 @@ class Simulation:
             moderation_config.openai_provider.api_endpoint = f"{MODERATION_BASE_URL}/v1/moderations"
             moderation_config.openai_provider.enabled = True
 
+        # 始终启用关键词审核作为可靠兜底:
+        #   - 不依赖任何外部 API，无网络失败风险
+        #   - 覆盖仿真中水军常用的阴谋论/假新闻模式
+        #   - 与 OpenAI provider 共同参与 confidence 策略取最高分
+        moderation_config.keyword_provider.enabled = True
+        moderation_config.keyword_provider.keywords = {
+            "misinformation": [
+                # 通用假新闻模式
+                "fake news", "conspiracy", "hoax", "cover up", "cover-up",
+                "false flag", "deep state", "hidden agenda", "fake quarantine",
+                "government cover", "laundered", "financially incentivized",
+                "bioweapon", "scandal", "cover-up", "suppressed",
+                "they don't want you to know", "mainstream media won't",
+                "wake up", "sheeple", "false flag",
+                # 煽动性写作模式（全大写标题党）
+                "SCANDAL", "COVER UP", "THEY'RE HIDING", "GOVERNMENT LIE",
+                # 中文模式
+                "谣言", "假新闻", "虚假", "造谣", "不实信息", "阴谋", "黑幕",
+            ],
+            "hate_speech": [
+                "仇恨", "歧视", "种族主义", "纳粹", "恐怖分子",
+                "should die", "kill yourself", "hate speech",
+            ],
+            "spam": [
+                "加微信", "扫码", "代购", "兼职", "赚钱",
+                "buy now", "click here", "free money",
+            ],
+            "violence": [
+                "暴力", "杀", "砍", "袭击", "爆炸",
+                "violence", "murder", "attack", "bomb",
+            ],
+        }
+
         # Set check_news_only=True based on user requirement
         moderation_config.check_news_only = True
 
