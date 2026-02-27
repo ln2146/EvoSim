@@ -252,14 +252,16 @@ class ProcessManager:
             # 清理失败不应影响程序运行
             print(f"清理临时文件时出错: {e}")
     
-    def start_demo(self, conda_env: Optional[str] = None) -> dict:
+    def start_demo(self, conda_env: Optional[str] = None, enable_attack: bool = False, enable_aftercare: bool = False) -> dict:
         """启动演示（数据库 + 主程序）
-        
+
         注意: conda_env 参数已废弃，系统自动使用当前 Python 环境
-        
+
         Args:
             conda_env: conda 环境名称（已废弃，保留兼容性）
-            
+            enable_attack: 是否启用恶意攻击（默认 False）
+            enable_aftercare: 是否启用事后干预（默认 False）
+
         Returns:
             dict: 启动结果
         """
@@ -327,8 +329,19 @@ class ProcessManager:
 
             # 启动主程序（如果尚未运行）
             if not main_running:
-                # 输入序列：n, y, n, n, Enter
-                auto_inputs = ['n', 'y', 'n', 'n', '']
+                # 根据前端预置标志动态生成输入序列
+                # 输入序列: [恶意攻击, 舆论平衡, 事后干预, 预启动, 确认]
+                # 恶意攻击: enable_attack -> 'y' or 'n'
+                # 舆论平衡: 始终选择 standalone mode -> 'y'
+                # 事后干预: enable_aftercare -> 'y' or 'n'
+                # 预启动: 始终不启用 -> 'n'
+                auto_inputs = [
+                    'y' if enable_attack else 'n',   # 恶意攻击
+                    'y',                              # 舆论平衡 (standalone)
+                    'y' if enable_aftercare else 'n', # 事后干预
+                    'n',                              # 预启动
+                    ''                                # 确认
+                ]
 
                 self._start_process_in_terminal(
                     script_path=main_script,
@@ -3134,14 +3147,16 @@ def stream_opinion_balance_logs():
 @app.route('/api/dynamic/start', methods=['POST'])
 def start_dynamic_demo():
     """启动动态演示系统（数据库 + 主程序）
-    
+
     自动使用当前 Python 环境（frontend_api.py 运行的环境）
-    
+
     请求体:
         {
-            "conda_env": "环境名称"  // 可选，已废弃，保留兼容性
+            "conda_env": "环境名称",      // 可选，已废弃，保留兼容性
+            "enable_attack": true/false,  // 可选，是否启用恶意攻击
+            "enable_aftercare": true/false // 可选，是否启用事后干预
         }
-    
+
     响应:
         {
             "success": true/false,
@@ -3153,12 +3168,18 @@ def start_dynamic_demo():
         }
     """
     try:
-        # 解析请求体（保留 conda_env 参数兼容性，但不使用）
+        # 解析请求体
         data = request.get_json() or {}
         conda_env = data.get('conda_env')  # 保留兼容性，但不使用
-        
-        # 调用 process_manager.start_demo()
-        result = process_manager.start_demo(conda_env=conda_env)
+        enable_attack = data.get('enable_attack', False)
+        enable_aftercare = data.get('enable_aftercare', False)
+
+        # 调用 process_manager.start_demo()，传递预置标志
+        result = process_manager.start_demo(
+            conda_env=conda_env,
+            enable_attack=enable_attack,
+            enable_aftercare=enable_aftercare
+        )
         
         # 返回 JSON 响应
         return jsonify(result)

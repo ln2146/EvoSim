@@ -519,13 +519,16 @@ export default function DynamicDemo() {
               body: JSON.stringify({ content_moderation: enableModeration }),
             }).catch(() => {})
 
-            // 调用后端 API 启动进程
+            // 调用后端 API 启动进程，传递预置标志
             const response = await fetch('/api/dynamic/start', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({}),
+              body: JSON.stringify({
+                enable_attack: enableAttack,
+                enable_aftercare: enableAftercare,
+              }),
             })
 
             const data = await response.json()
