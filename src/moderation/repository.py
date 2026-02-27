@@ -195,99 +195,84 @@ class ModerationRepository:
 
     def get_by_post_id(self, post_id: str) -> List[ModerationVerdict]:
         """获取帖子的所有审核记录"""
-        try:
-            self.cursor.execute('''
-                SELECT * FROM moderation_records
-                WHERE post_id = ?
-                ORDER BY checked_at DESC
-            ''', (post_id,))
+        self.cursor.execute('''
+            SELECT * FROM moderation_records
+            WHERE post_id = ?
+            ORDER BY checked_at DESC
+        ''', (post_id,))
 
-            rows = self.cursor.fetchall()
-            return [self._row_to_verdict(row) for row in rows]
-
-        except sqlite3.Error as e:
-            logger.error(f"Error getting moderation records for post {post_id}: {e}")
-            return []
+        rows = self.cursor.fetchall()
+        return [self._row_to_verdict(row) for row in rows]
 
     def get_by_user_id(self, user_id: str, limit: int = 100) -> List[ModerationVerdict]:
         """获取用户的审核记录"""
-        try:
-            self.cursor.execute('''
-                SELECT * FROM moderation_records
-                WHERE user_id = ?
-                ORDER BY checked_at DESC
-                LIMIT ?
-            ''', (user_id, limit))
+        self.cursor.execute('''
+            SELECT * FROM moderation_records
+            WHERE user_id = ?
+            ORDER BY checked_at DESC
+            LIMIT ?
+        ''', (user_id, limit))
 
-            rows = self.cursor.fetchall()
-            return [self._row_to_verdict(row) for row in rows]
-
-        except sqlite3.Error as e:
-            logger.error(f"Error getting moderation records for user {user_id}: {e}")
-            return []
+        rows = self.cursor.fetchall()
+        return [self._row_to_verdict(row) for row in rows]
 
     def get_stats(self, limit: int = 1000) -> ModerationStats:
         """获取审核统计"""
-        try:
-            self.cursor.execute('''
-                SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN action IS NOT NULL AND action != 'none' THEN 1 ELSE 0 END) as flagged
-                FROM moderation_records
-                LIMIT ?
-            ''', (limit,))
+        self.cursor.execute('''
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN action IS NOT NULL AND action != 'none' THEN 1 ELSE 0 END) as flagged
+            FROM moderation_records
+            LIMIT ?
+        ''', (limit,))
 
-            row = self.cursor.fetchone()
-            stats = ModerationStats(
-                total_checked=row[0] or 0,
-                total_flagged=row[1] or 0,
-            )
+        row = self.cursor.fetchone()
+        stats = ModerationStats(
+            total_checked=row[0] or 0,
+            total_flagged=row[1] or 0,
+        )
 
-            # 按动作统计
-            self.cursor.execute('''
-                SELECT action, COUNT(*) as count
-                FROM moderation_records
-                WHERE action IS NOT NULL
-                GROUP BY action
-            ''')
-            for action_str, count in self.cursor.fetchall():
-                try:
-                    action = ModerationAction(action_str)
-                    stats.action_counts[action] = count
-                except ValueError:
-                    pass
+        # 按动作统计
+        self.cursor.execute('''
+            SELECT action, COUNT(*) as count
+            FROM moderation_records
+            WHERE action IS NOT NULL
+            GROUP BY action
+        ''')
+        for action_str, count in self.cursor.fetchall():
+            try:
+                action = ModerationAction(action_str)
+                stats.action_counts[action] = count
+            except ValueError:
+                pass
 
-            # 按严重程度统计
-            self.cursor.execute('''
-                SELECT severity, COUNT(*) as count
-                FROM moderation_records
-                GROUP BY severity
-            ''')
-            for severity_str, count in self.cursor.fetchall():
-                try:
-                    severity = ModerationSeverity(severity_str)
-                    stats.severity_counts[severity] = count
-                except ValueError:
-                    pass
+        # 按严重程度统计
+        self.cursor.execute('''
+            SELECT severity, COUNT(*) as count
+            FROM moderation_records
+            GROUP BY severity
+        ''')
+        for severity_str, count in self.cursor.fetchall():
+            try:
+                severity = ModerationSeverity(severity_str)
+                stats.severity_counts[severity] = count
+            except ValueError:
+                pass
 
-            # 按分类统计
-            self.cursor.execute('''
-                SELECT category, COUNT(*) as count
-                FROM moderation_records
-                GROUP BY category
-            ''')
-            for category_str, count in self.cursor.fetchall():
-                try:
-                    category = ModerationCategory(category_str)
-                    stats.category_counts[category] = count
-                except ValueError:
-                    pass
+        # 按分类统计
+        self.cursor.execute('''
+            SELECT category, COUNT(*) as count
+            FROM moderation_records
+            GROUP BY category
+        ''')
+        for category_str, count in self.cursor.fetchall():
+            try:
+                category = ModerationCategory(category_str)
+                stats.category_counts[category] = count
+            except ValueError:
+                pass
 
-            return stats
-
-        except sqlite3.Error as e:
-            logger.error(f"Error getting moderation stats: {e}")
-            return ModerationStats()
+        return stats
 
     def _row_to_verdict(self, row: sqlite3.Row) -> ModerationVerdict:
         """将数据库行转换为 ModerationVerdict"""

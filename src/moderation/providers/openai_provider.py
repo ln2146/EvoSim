@@ -77,21 +77,12 @@ class OpenAIProvider:
             logger.warning("OpenAI API key not configured")
             return None
 
-        try:
-            response = self._call_api(content)
+        response = self._call_api(content)
 
-            if not response or not response.get("results"):
-                logger.warning(f"Invalid API response: {response}")
-                return None
+        if not response or not response.get("results"):
+            raise RuntimeError(f"Invalid API response from OpenAI moderation: {response}")
 
-            return self._parse_response(response, content, metadata)
-
-        except requests.RequestException as e:
-            logger.error(f"OpenAI API request error: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"OpenAI provider error: {e}")
-            return None
+        return self._parse_response(response, content, metadata)
 
     def _call_api(self, content: str) -> Optional[Dict[str, Any]]:
         """调用 OpenAI Moderation API"""
@@ -115,8 +106,7 @@ class OpenAIProvider:
         )
 
         if response.status_code != 200:
-            logger.error(f"API returned status {response.status_code}: {response.text}")
-            return None
+            raise RuntimeError(f"OpenAI Moderation API returned status {response.status_code}: {response.text}")
 
         return response.json()
 
@@ -225,43 +215,37 @@ class OpenAIProvider:
         for i in range(0, len(contents), batch_size):
             batch = contents[i:i + batch_size]
 
-            try:
-                headers = {
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                }
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
 
-                data = {"input": batch}
-                if self.config.api_endpoint and "openai" not in self.config.api_endpoint.lower():
-                    data["model"] = self.config.model
+            data = {"input": batch}
+            if self.config.api_endpoint and "openai" not in self.config.api_endpoint.lower():
+                data["model"] = self.config.model
 
-                response = requests.post(
-                    self.endpoint,
-                    headers=headers,
-                    json=data,
-                    timeout=self.timeout,
-                )
+            response = requests.post(
+                self.endpoint,
+                headers=headers,
+                json=data,
+                timeout=self.timeout,
+            )
 
-                if response.status_code == 200:
-                    response_data = response.json()
-                    results = response_data.get("results", [])
+            if response.status_code != 200:
+                raise RuntimeError(f"Batch OpenAI Moderation API returned status {response.status_code}: {response.text}")
 
-                    for j, result in enumerate(results):
-                        flagged = result.get("flagged", False)
-                        if flagged:
-                            # 构造单个内容的响应格式
-                            single_response = {"results": [result]}
-                            verdicts.append(
-                                self._parse_response(single_response, batch[j], metadata)
-                            )
-                        else:
-                            verdicts.append(None)
+            response_data = response.json()
+            results = response_data.get("results", [])
+
+            for j, result in enumerate(results):
+                flagged = result.get("flagged", False)
+                if flagged:
+                    # 构造单个内容的响应格式
+                    single_response = {"results": [result]}
+                    verdicts.append(
+                        self._parse_response(single_response, batch[j], metadata)
+                    )
                 else:
-                    logger.error(f"Batch API error: {response.status_code}")
-                    verdicts.extend([None] * len(batch))
-
-            except Exception as e:
-                logger.error(f"Batch moderation error: {e}")
-                verdicts.extend([None] * len(batch))
+                    verdicts.append(None)
 
         return verdicts

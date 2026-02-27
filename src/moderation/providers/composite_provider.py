@@ -44,23 +44,17 @@ class CompositeProvider:
         """初始化所有配置的提供者"""
         # OpenAI Provider
         if self.config.openai_provider.enabled:
-            try:
-                provider = OpenAIProvider(self.config.openai_provider)
-                weight = self.config.openai_provider.weight
-                self.providers.append(("openai", weight, provider))
-                logger.info("Initialized OpenAI moderation provider")
-            except Exception as e:
-                logger.error(f"Failed to initialize OpenAI provider: {e}")
+            provider = OpenAIProvider(self.config.openai_provider)
+            weight = self.config.openai_provider.weight
+            self.providers.append(("openai", weight, provider))
+            logger.info("Initialized OpenAI moderation provider")
 
         # Keyword Provider
         if self.config.keyword_provider.enabled:
-            try:
-                provider = KeywordProvider(self.config.keyword_provider)
-                weight = self.config.keyword_provider.weight
-                self.providers.append(("keyword", weight, provider))
-                logger.info("Initialized keyword moderation provider")
-            except Exception as e:
-                logger.error(f"Failed to initialize keyword provider: {e}")
+            provider = KeywordProvider(self.config.keyword_provider)
+            weight = self.config.keyword_provider.weight
+            self.providers.append(("keyword", weight, provider))
+            logger.info("Initialized keyword moderation provider")
 
         if not self.providers:
             logger.warning("No moderation providers enabled")
@@ -108,13 +102,10 @@ class CompositeProvider:
         优先级策略: 按顺序返回第一个有结果的裁决
         """
         for name, weight, provider in self.providers:
-            try:
-                verdict = provider.check(content, metadata)
-                if verdict:
-                    logger.debug(f"Provider '{name}' returned a verdict")
-                    return verdict
-            except Exception as e:
-                logger.error(f"Provider '{name}' error: {e}")
+            verdict = provider.check(content, metadata)
+            if verdict:
+                logger.debug(f"Provider '{name}' returned a verdict")
+                return verdict
 
         return None
 
@@ -129,14 +120,11 @@ class CompositeProvider:
         verdicts = []
 
         for name, weight, provider in self.providers:
-            try:
-                verdict = provider.check(content, metadata)
-                if verdict:
-                    # 加权置信度
-                    weighted_confidence = verdict.confidence * weight
-                    verdicts.append((name, verdict, weighted_confidence))
-            except Exception as e:
-                logger.error(f"Provider '{name}' error: {e}")
+            verdict = provider.check(content, metadata)
+            if verdict:
+                # 加权置信度
+                weighted_confidence = verdict.confidence * weight
+                verdicts.append((name, verdict, weighted_confidence))
 
         if not verdicts:
             return None
@@ -159,12 +147,9 @@ class CompositeProvider:
         verdicts = []
 
         for name, weight, provider in self.providers:
-            try:
-                verdict = provider.check(content, metadata)
-                if verdict:
-                    verdicts.append((name, verdict, weight))
-            except Exception as e:
-                logger.error(f"Provider '{name}' error: {e}")
+            verdict = provider.check(content, metadata)
+            if verdict:
+                verdicts.append((name, verdict, weight))
 
         if not verdicts:
             return None
