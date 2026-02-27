@@ -702,23 +702,22 @@ class DatabaseManager:
 
     def save_simulation_db(self, timestamp: str):
         """Save a timestamped copy of the simulation database."""
-        if self.use_service:
-            # In service mode, cannot copy file directly
-            logging.warning("Service mode cannot copy database file; skipping backup")
-            return
-        
-        # Original logic for direct connection mode
-        # Close the connection to ensure all data is written
-        self.conn.close()
+        if not self.use_service:
+            # Direct connection: close first to flush WAL
+            self.conn.close()
 
         # Create archive directory if it doesn't exist
         archive_dir = f"experiment_outputs/database_copies"
         os.makedirs(archive_dir, exist_ok=True)
 
-        # Copy the database file
+        # Copy the database file (works for both service and direct mode
+        # because the db file is always at self.db_path on the local filesystem)
         archived_db = f"{archive_dir}/{timestamp}.db"
-        shutil.copy2(self.db_path, archived_db)
-        logging.info(f"Saved simulation database to {archived_db}")
+        try:
+            shutil.copy2(self.db_path, archived_db)
+            logging.info(f"Saved simulation database to {archived_db}")
+        except Exception as e:
+            logging.warning(f"Failed to backup database: {e}")
 
 
     def add_user(self, user_id: str, user_config: dict):

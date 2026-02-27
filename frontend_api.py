@@ -2089,6 +2089,37 @@ def save_experiment_config():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/config/moderation', methods=['POST'])
+def update_moderation_config():
+    """Update moderation.content_moderation in experiment_config.json.
+
+    This is called by the frontend BEFORE starting a demo so that
+    main.py reads the correct initial value for control_flags.moderation_enabled.
+    """
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({'error': 'No JSON body'}), 400
+
+        enabled = bool(data.get('content_moderation', False))
+        config_path = 'configs/experiment_config.json'
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        if 'moderation' not in config:
+            config['moderation'] = {}
+        config['moderation']['content_moderation'] = enabled
+
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=4)
+
+        return jsonify({'message': 'OK', 'content_moderation': enabled})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/interview/send', methods=['POST'])
 def send_interview():
     """向选中的用户发送采访问题并获取回答"""

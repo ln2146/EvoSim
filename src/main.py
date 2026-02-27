@@ -814,6 +814,10 @@ if __name__ == "__main__":
     else:
         control_flags.aftercare_enabled = False
 
+    # Content moderation: no CLI prompt — read from config file.
+    # Can be toggled at runtime via /control/moderation API.
+    control_flags.moderation_enabled = config.get('moderation', {}).get('content_moderation', False)
+
     # Get user choice for the prebunking system
     enable_prebunking = get_user_choice_prebunking()
 
@@ -847,16 +851,18 @@ if __name__ == "__main__":
         config['experiment'] = {}
 
     config['experiment']['type'] = fact_check_type
-    if 'settings' not in config['experiment']:
-        config['experiment']['settings'] = {}
-
-    # Update fact-checking settings
-    config['experiment']['settings'].update(fact_check_settings)
+    # Replace settings entirely (avoid stale keys from a previous run)
+    config['experiment']['settings'] = fact_check_settings
 
     # Update prebunking config
     if 'prebunking_system' not in config:
         config['prebunking_system'] = {}
     config['prebunking_system']['enabled'] = enable_prebunking
+
+    # Persist moderation flag so it survives restarts
+    if 'moderation' not in config:
+        config['moderation'] = {}
+    config['moderation']['content_moderation'] = control_flags.moderation_enabled
 
     # Persist user selections to the config file (engine is resolved dynamically via selector; do not persist it)
     config_to_save = dict(config)
@@ -883,6 +889,15 @@ if __name__ == "__main__":
     print(f"🛡️  Prebunking system: {'enabled' if enable_prebunking else 'disabled'}")
     if enable_prebunking:
         print("   • Will insert safety prompts into regular users' feeds")
+
+    # 显示内容审核状态（由全局开关控制）
+    if control_flags.moderation_enabled:
+        print("🛡️  Content moderation: ✅ enabled")
+        print("   • Visibility degradation, warning labels, hard takedowns")
+        print("   • Can be toggled via API at runtime")
+    else:
+        print("🛡️  Content moderation: ❌ disabled")
+        print("   • Can be enabled via API at runtime")
 
     # 显示第三方事实核查状态（由全局开关控制）
     if control_flags.aftercare_enabled:

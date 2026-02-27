@@ -512,6 +512,13 @@ export default function DynamicDemo() {
           setIsStarting(true)
 
           try {
+            // 启动前将内容审核开关写入配置文件，确保 main.py 读到正确的初始值
+            await fetch('/api/config/moderation', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ content_moderation: enableModeration }),
+            }).catch(() => {})
+
             // 调用后端 API 启动进程
             const response = await fetch('/api/dynamic/start', {
               method: 'POST',
@@ -561,7 +568,7 @@ export default function DynamicDemo() {
                   }).catch(() => {}))
                 }
                 if (preModeration) {
-                  syncs.push(fetch('/api/control/moderation', {
+                  syncs.push(fetch('http://localhost:8000/control/moderation', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ enabled: true }),
                   }).catch(() => {}))
@@ -765,9 +772,14 @@ export default function DynamicDemo() {
         onToggleModeration={async () => {
           if (isTogglingModeration) return
 
-          // 演示未运行时：仅预置本地状态，启动后自动同步到后端
+          // 演示未运行时：预置本地状态，同时持久化到配置文件
           if (!isRunning) {
-            setEnableModeration(!enableModeration)
+            const next = !enableModeration
+            setEnableModeration(next)
+            fetch('/api/config/moderation', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ content_moderation: next }),
+            }).catch(() => {})
             return
           }
 
