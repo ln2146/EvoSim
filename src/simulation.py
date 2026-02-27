@@ -120,22 +120,18 @@ class Simulation:
         logging.info(f"🔍 Fact-check execution controlled by control_flags.aftercare_enabled (current: {control_flags.aftercare_enabled})")
 
         # Initialize moderation service
-        self.moderation_service = None
-        try:
-            moderation_config = load_config_from_env()
-            # Enable OpenAI Moderation provider with dedicated key and official endpoint
-            if MODERATION_API_KEY and moderation_config.openai_provider:
-                moderation_config.openai_provider.api_key = MODERATION_API_KEY
-                moderation_config.openai_provider.api_endpoint = f"{MODERATION_BASE_URL}/v1/moderations"
-                moderation_config.openai_provider.enabled = True
+        moderation_config = load_config_from_env()
+        # Enable OpenAI Moderation provider with dedicated key and official endpoint
+        if MODERATION_API_KEY and moderation_config.openai_provider:
+            moderation_config.openai_provider.api_key = MODERATION_API_KEY
+            moderation_config.openai_provider.api_endpoint = f"{MODERATION_BASE_URL}/v1/moderations"
+            moderation_config.openai_provider.enabled = True
 
-            # Set check_news_only=True based on user requirement
-            moderation_config.check_news_only = True
+        # Set check_news_only=True based on user requirement
+        moderation_config.check_news_only = True
 
-            self.moderation_service = ModerationService(moderation_config)
-            logging.info(f"🛡️ Moderation service initialized (controlled by control_flags.moderation_enabled)")
-        except Exception as e:
-            logging.warning(f"Failed to initialize moderation service: {e}")
+        self.moderation_service = ModerationService(moderation_config)
+        logging.info(f"🛡️ Moderation service initialized (controlled by control_flags.moderation_enabled)")
 
         # Initialize opinion balance manager (only if enabled)
         if config.get("opinion_balance_system", {}).get("enabled", False):
@@ -627,47 +623,39 @@ class Simulation:
         Args:
             step: Current simulation step
         """
-        if not self.moderation_service:
-            logging.info(f"🛡️ Time step {step + 1}: moderation service not available")
+        logging.info(f"🛡️ Time step {step + 1}: starting moderation check")
+
+        # Get news posts to check (from current and previous timesteps)
+        posts_to_check = self._get_posts_for_moderation(step)
+
+        if not posts_to_check:
+            logging.info(f"🛡️ Time step {step + 1}: no news posts to moderate")
             return
 
-        try:
-            logging.info(f"🛡️ Time step {step + 1}: starting moderation check")
+        logging.info(f"🛡️ Time step {step + 1}: checking {len(posts_to_check)} news posts")
 
-            # Get news posts to check (from current and previous timesteps)
-            posts_to_check = self._get_posts_for_moderation(step)
+        # Process moderation (can batch multiple posts)
+        verdicts = self.moderation_service.check_news_posts(posts_to_check)
 
-            if not posts_to_check:
-                logging.info(f"🛡️ Time step {step + 1}: no news posts to moderate")
-                return
-
-            logging.info(f"🛡️ Time step {step + 1}: checking {len(posts_to_check)} news posts")
-
-            # Process moderation (can batch multiple posts)
-            verdicts = self.moderation_service.check_news_posts(posts_to_check)
-
-            # Log results with detailed information
-            if not verdicts:
-                logging.info(f"🛡️ Time step {step + 1}: moderation complete - no actions taken (service may be disabled or no violations found)")
-            else:
-                action_counts = {}
-                for verdict in verdicts:
-                    action = verdict.action.value if verdict.action else "none"
-                    action_counts[action] = action_counts.get(action, 0) + 1
-                    # 详细记录每个裁决
-                    logging.info(
-                        f"🛡️ Moderation verdict: post={verdict.post_id[:8]}..., "
-                        f"action={action}, severity={verdict.severity.value if verdict.severity else 'N/A'}, "
-                        f"confidence={verdict.confidence:.2f if verdict.confidence else 0}"
-                    )
-
+        # Log results with detailed information
+        if not verdicts:
+            logging.info(f"🛡️ Time step {step + 1}: moderation complete - no actions taken (service may be disabled or no violations found)")
+        else:
+            action_counts = {}
+            for verdict in verdicts:
+                action = verdict.action.value if verdict.action else "none"
+                action_counts[action] = action_counts.get(action, 0) + 1
+                # 详细记录每个裁决
                 logging.info(
-                    f"🛡️ Time step {step + 1}: moderation complete - "
-                    f"total_actions={len(verdicts)}, breakdown: {action_counts}"
+                    f"🛡️ Moderation verdict: post={verdict.post_id[:8]}..., "
+                    f"action={action}, severity={verdict.severity.value if verdict.severity else 'N/A'}, "
+                    f"confidence={verdict.confidence:.2f if verdict.confidence else 0}"
                 )
 
-        except Exception as e:
-            logging.error(f"Error during moderation: {e}")
+            logging.info(
+                f"🛡️ Time step {step + 1}: moderation complete - "
+                f"total_actions={len(verdicts)}, breakdown: {action_counts}"
+            )
 
     def _get_posts_for_moderation(self, step: int) -> list:
         """
@@ -679,52 +667,47 @@ class Simulation:
         Returns:
             List of post dictionaries
         """
-        try:
-            # Get news posts from the current and recent timesteps
-            # We check posts from the current timestep and previous 2 timesteps
-            min_timestep = max(0, step - 1)
+        # Get news posts from the current and recent timesteps
+        # We check posts from the current timestep and previous 2 timesteps
+        min_timestep = max(0, step - 1)
 
-            cursor = self.conn.cursor()
-            cursor.execute('''
-                SELECT
-                    p.post_id,
-                    p.content,
-                    p.author_id,
-                    p.is_news,
-                    p.news_type,
-                    p.num_likes,
-                    p.num_shares,
-                    p.num_comments,
-                    pt.time_step
-                FROM posts p
-                LEFT JOIN post_timesteps pt ON p.post_id = pt.post_id
-                WHERE p.is_news = 1
-                AND p.author_id = 'agentverse_news'
-                AND (p.status IS NULL OR p.status != 'taken_down')
-                AND pt.time_step >= ?
-                ORDER BY pt.time_step DESC
-            ''', (min_timestep,))
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT
+                p.post_id,
+                p.content,
+                p.author_id,
+                p.is_news,
+                p.news_type,
+                p.num_likes,
+                p.num_shares,
+                p.num_comments,
+                pt.time_step
+            FROM posts p
+            LEFT JOIN post_timesteps pt ON p.post_id = pt.post_id
+            WHERE p.is_news = 1
+            AND p.author_id = 'agentverse_news'
+            AND (p.status IS NULL OR p.status != 'taken_down')
+            AND pt.time_step >= ?
+            ORDER BY pt.time_step DESC
+        ''', (min_timestep,))
 
-            posts = []
-            for row in cursor.fetchall():
-                posts.append({
-                    'post_id': row[0],
-                    'content': row[1],
-                    'user_id': row[2],
-                    'author_id': row[2],
-                    'is_news': bool(row[3]),
-                    'news_type': row[4],
-                    'num_likes': row[5] or 0,
-                    'num_shares': row[6] or 0,
-                    'num_comments': row[7] or 0,
-                    'time_step': row[8],
-                })
+        posts = []
+        for row in cursor.fetchall():
+            posts.append({
+                'post_id': row[0],
+                'content': row[1],
+                'user_id': row[2],
+                'author_id': row[2],
+                'is_news': bool(row[3]),
+                'news_type': row[4],
+                'num_likes': row[5] or 0,
+                'num_shares': row[6] or 0,
+                'num_comments': row[7] or 0,
+                'time_step': row[8],
+            })
 
-            return posts
-
-        except Exception as e:
-            logging.error(f"Error getting posts for moderation: {e}")
-            return []
+        return posts
 
     async def _async_user_post_creation(self, user, step):
         """Async user post creation helper with simplified limit checks"""
