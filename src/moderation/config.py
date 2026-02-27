@@ -101,7 +101,7 @@ class ModerationConfig:
     # 审核提供者配置
     openai_provider: ModerationProviderConfig = field(
         default_factory=lambda: ModerationProviderConfig(
-            enabled=True,
+            enabled=False,   # 已废弃：OpenAI Moderation API 需要独立付费账户，改用 llm_provider
             threshold=0.7,
         )
     )
@@ -113,6 +113,13 @@ class ModerationConfig:
                 "misinformation": ["谣言", "假新闻", "虚假"],
                 "hate_speech": ["仇恨", "歧视"],
             }
+        )
+    )
+    llm_provider: ModerationProviderConfig = field(
+        default_factory=lambda: ModerationProviderConfig(
+            enabled=False,   # 由 simulation.py 在运行时注入 api_key/endpoint/model 后启用
+            threshold=0.6,
+            model="gemini-2.0-flash",
         )
     )
 

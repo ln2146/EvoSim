@@ -11,6 +11,7 @@ from ..types import ModerationVerdict, ModerationSeverity
 from ..config import ModerationConfig
 from .openai_provider import OpenAIProvider
 from .keyword_provider import KeywordProvider
+from .llm_provider import LLMProvider
 
 
 logger = logging.getLogger(__name__)
@@ -42,19 +43,26 @@ class CompositeProvider:
 
     def _init_providers(self):
         """初始化所有配置的提供者"""
-        # OpenAI Provider
-        if self.config.openai_provider.enabled:
-            provider = OpenAIProvider(self.config.openai_provider)
-            weight = self.config.openai_provider.weight
-            self.providers.append(("openai", weight, provider))
-            logger.info("Initialized OpenAI moderation provider")
+        # LLM Provider（主力：语义级审核，使用与仿真相同的 API 端点）
+        if self.config.llm_provider.enabled:
+            provider = LLMProvider(self.config.llm_provider)
+            weight = self.config.llm_provider.weight
+            self.providers.append(("llm", weight, provider))
+            logger.info("Initialized LLM moderation provider")
 
-        # Keyword Provider
+        # Keyword Provider（兜底：无外部依赖，覆盖明显模式）
         if self.config.keyword_provider.enabled:
             provider = KeywordProvider(self.config.keyword_provider)
             weight = self.config.keyword_provider.weight
             self.providers.append(("keyword", weight, provider))
             logger.info("Initialized keyword moderation provider")
+
+        # OpenAI Moderation API Provider（已废弃，需独立付费账户）
+        if self.config.openai_provider.enabled:
+            provider = OpenAIProvider(self.config.openai_provider)
+            weight = self.config.openai_provider.weight
+            self.providers.append(("openai", weight, provider))
+            logger.info("Initialized OpenAI moderation provider")
 
         if not self.providers:
             logger.warning("No moderation providers enabled")

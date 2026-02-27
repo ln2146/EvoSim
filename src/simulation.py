@@ -29,7 +29,7 @@ from tracked_opinion_helper import (
 
 # Moderation system
 from moderation import ModerationService, ModerationConfig, load_config_from_env
-from keys import OPENAI_API_KEY, MODERATION_API_KEY, MODERATION_BASE_URL
+from keys import OPENAI_API_KEY, OPENAI_BASE_URL
 
 
 class Simulation:
@@ -121,29 +121,22 @@ class Simulation:
 
         # Initialize moderation service
         moderation_config = load_config_from_env()
-        # Enable OpenAI Moderation provider with dedicated key and official endpoint
-        if MODERATION_API_KEY and moderation_config.openai_provider:
-            moderation_config.openai_provider.api_key = MODERATION_API_KEY
-            moderation_config.openai_provider.api_endpoint = f"{MODERATION_BASE_URL}/v1/moderations"
-            moderation_config.openai_provider.enabled = True
 
-        # 始终启用关键词审核作为可靠兜底:
-        #   - 不依赖任何外部 API，无网络失败风险
-        #   - 覆盖仿真中水军常用的阴谋论/假新闻模式
-        #   - 与 OpenAI provider 共同参与 confidence 策略取最高分
+        # 使用与仿真主体相同的 LLM 端点进行语义级内容审核
+        # 无需独立的 OpenAI 账户，复用现有 API 基础设施
+        moderation_config.llm_provider.enabled = True
+        moderation_config.llm_provider.api_key = OPENAI_API_KEY
+        moderation_config.llm_provider.api_endpoint = OPENAI_BASE_URL
+        moderation_config.llm_provider.model = self.engine  # 与仿真使用相同模型
+
+        # 关键词审核作为兜底（LLM 调用失败时仍能捕获明显违规）
         moderation_config.keyword_provider.enabled = True
         moderation_config.keyword_provider.keywords = {
             "misinformation": [
-                # 通用假新闻模式
                 "fake news", "conspiracy", "hoax", "cover up", "cover-up",
                 "false flag", "deep state", "hidden agenda", "fake quarantine",
                 "government cover", "laundered", "financially incentivized",
-                "bioweapon", "scandal", "cover-up", "suppressed",
-                "they don't want you to know", "mainstream media won't",
-                "wake up", "sheeple", "false flag",
-                # 煽动性写作模式（全大写标题党）
-                "SCANDAL", "COVER UP", "THEY'RE HIDING", "GOVERNMENT LIE",
-                # 中文模式
+                "bioweapon", "scandal", "suppressed",
                 "谣言", "假新闻", "虚假", "造谣", "不实信息", "阴谋", "黑幕",
             ],
             "hate_speech": [
