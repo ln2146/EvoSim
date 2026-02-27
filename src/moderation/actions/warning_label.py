@@ -43,31 +43,26 @@ class WarningLabelAction:
         Returns:
             是否执行成功
         """
-        try:
-            # 获取标签文字
-            label_text = self._get_label_text(verdict)
+        # 获取标签文字
+        label_text = self._get_label_text(verdict)
 
-            # 更新裁决的标签文字
-            verdict.label_text = label_text
+        # 更新裁决的标签文字
+        verdict.label_text = label_text
 
-            # 更新数据库
-            self.repository.update_post_moderation(
-                post_id=verdict.post_id,
-                action="warning_label",
-                label_text=label_text,
-                reason=verdict.reason,
-            )
+        # 更新数据库
+        self.repository.update_post_moderation(
+            post_id=verdict.post_id,
+            action="warning_label",
+            label_text=label_text,
+            reason=verdict.reason,
+        )
 
-            logger.info(
-                f"Warning label applied to post {verdict.post_id}: "
-                f"label='{label_text}', category={verdict.category.value}"
-            )
+        logger.info(
+            f"Warning label applied to post {verdict.post_id}: "
+            f"label='{label_text}', category={verdict.category.value}"
+        )
 
-            return True
-
-        except Exception as e:
-            logger.error(f"Error executing warning label: {e}")
-            return False
+        return True
 
     def _get_label_text(self, verdict: ModerationVerdict) -> str:
         """
@@ -126,17 +121,12 @@ class WarningLabelAction:
         Returns:
             是否执行成功
         """
-        try:
-            self.repository.update_post_moderation(
-                post_id=post_id,
-                action="none",
-                label_text=None,
-                reason="警告已撤销",
-            )
+        self.repository.update_post_moderation(
+            post_id=post_id,
+            action="none",
+            label_text=None,
+            reason="警告已撤销",
+        )
 
-            logger.info(f"Warning label reverted for post {post_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error reverting warning label: {e}")
-            return False
+        logger.info(f"Warning label reverted for post {post_id}")
+        return True

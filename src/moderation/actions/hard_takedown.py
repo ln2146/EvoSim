@@ -46,35 +46,30 @@ class HardTakedownAction:
         Returns:
             是否执行成功
         """
-        try:
-            # 检查是否需要封号
-            should_ban = self._should_ban_user(verdict)
+        # 检查是否需要封号
+        should_ban = self._should_ban_user(verdict)
 
-            # 检查是否需要删帖
-            should_takedown = self._should_takedown_post(verdict)
+        # 检查是否需要删帖
+        should_takedown = self._should_takedown_post(verdict)
 
-            if should_ban:
-                self._ban_user(verdict)
+        if should_ban:
+            self._ban_user(verdict)
 
-            if should_takedown:
-                self._takedown_post(verdict)
+        if should_takedown:
+            self._takedown_post(verdict)
 
-            action_taken = []
-            if should_ban:
-                action_taken.append("封号")
-            if should_takedown:
-                action_taken.append("删帖")
+        action_taken = []
+        if should_ban:
+            action_taken.append("封号")
+        if should_takedown:
+            action_taken.append("删帖")
 
-            logger.warning(
-                f"Hard takedown executed on post {verdict.post_id}, "
-                f"user {verdict.user_id}: {', '.join(action_taken)}"
-            )
+        logger.warning(
+            f"Hard takedown executed on post {verdict.post_id}, "
+            f"user {verdict.user_id}: {', '.join(action_taken)}"
+        )
 
-            return True
-
-        except Exception as e:
-            logger.error(f"Error executing hard takedown: {e}")
-            return False
+        return True
 
     def _should_ban_user(self, verdict: ModerationVerdict) -> bool:
         """
@@ -108,45 +103,37 @@ class HardTakedownAction:
 
     def _ban_user(self, verdict: ModerationVerdict):
         """封禁用户"""
-        try:
-            conn = self.repository.conn
-            conn.execute('''
-                UPDATE users
-                SET status = 'banned',
-                    ban_reason = ?,
-                    banned_at = CURRENT_TIMESTAMP
-                WHERE user_id = ?
-            ''', (verdict.reason, verdict.user_id))
+        conn = self.repository.conn
+        conn.execute('''
+            UPDATE users
+            SET status = 'banned',
+                ban_reason = ?,
+                banned_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+        ''', (verdict.reason, verdict.user_id))
 
-            logger.warning(f"User {verdict.user_id} banned: {verdict.reason}")
-
-        except Exception as e:
-            logger.error(f"Error banning user {verdict.user_id}: {e}")
+        logger.warning(f"User {verdict.user_id} banned: {verdict.reason}")
 
     def _takedown_post(self, verdict: ModerationVerdict):
         """删除帖子"""
-        try:
-            conn = self.repository.conn
-            conn.execute('''
-                UPDATE posts
-                SET status = 'taken_down',
-                    takedown_reason = ?,
-                    takedown_timestamp = CURRENT_TIMESTAMP,
-                    moderation_action = ?,
-                    moderation_reason = ?,
-                    moderated_at = CURRENT_TIMESTAMP
-                WHERE post_id = ?
-            ''', (
-                verdict.reason,
-                ModerationAction.HARD_TAKEDOWN.value,
-                verdict.reason,
-                verdict.post_id,
-            ))
+        conn = self.repository.conn
+        conn.execute('''
+            UPDATE posts
+            SET status = 'taken_down',
+                takedown_reason = ?,
+                takedown_timestamp = CURRENT_TIMESTAMP,
+                moderation_action = ?,
+                moderation_reason = ?,
+                moderated_at = CURRENT_TIMESTAMP
+            WHERE post_id = ?
+        ''', (
+            verdict.reason,
+            ModerationAction.HARD_TAKEDOWN.value,
+            verdict.reason,
+            verdict.post_id,
+        ))
 
-            logger.warning(f"Post {verdict.post_id} taken down: {verdict.reason}")
-
-        except Exception as e:
-            logger.error(f"Error taking down post {verdict.post_id}: {e}")
+        logger.warning(f"Post {verdict.post_id} taken down: {verdict.reason}")
 
     def check_user_banned(self, user_id: str) -> bool:
         """
@@ -158,19 +145,14 @@ class HardTakedownAction:
         Returns:
             是否被封禁
         """
-        try:
-            conn = self.repository.conn
-            cursor = conn.cursor()
-            cursor.execute('''
-                SELECT status FROM users WHERE user_id = ?
-            ''', (user_id,))
+        conn = self.repository.conn
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT status FROM users WHERE user_id = ?
+        ''', (user_id,))
 
-            row = cursor.fetchone()
-            return row and row[0] == 'banned'
-
-        except Exception as e:
-            logger.error(f"Error checking user ban status: {e}")
-            return False
+        row = cursor.fetchone()
+        return row and row[0] == 'banned'
 
     def unban_user(self, user_id: str) -> bool:
         """
@@ -182,22 +164,17 @@ class HardTakedownAction:
         Returns:
             是否执行成功
         """
-        try:
-            conn = self.repository.conn
-            conn.execute('''
-                UPDATE users
-                SET status = 'active',
-                    ban_reason = NULL,
-                    banned_at = NULL
-                WHERE user_id = ?
-            ''', (user_id,))
+        conn = self.repository.conn
+        conn.execute('''
+            UPDATE users
+            SET status = 'active',
+                ban_reason = NULL,
+                banned_at = NULL
+            WHERE user_id = ?
+        ''', (user_id,))
 
-            logger.info(f"User {user_id} unbanned")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error unbanning user {user_id}: {e}")
-            return False
+        logger.info(f"User {user_id} unbanned")
+        return True
 
     def restore_post(self, post_id: str) -> bool:
         """
@@ -209,22 +186,17 @@ class HardTakedownAction:
         Returns:
             是否执行成功
         """
-        try:
-            conn = self.repository.conn
-            conn.execute('''
-                UPDATE posts
-                SET status = 'active',
-                    takedown_reason = NULL,
-                    takedown_timestamp = NULL,
-                    moderation_action = NULL,
-                    moderation_reason = NULL,
-                    moderated_at = NULL
-                WHERE post_id = ?
-            ''', (post_id,))
+        conn = self.repository.conn
+        conn.execute('''
+            UPDATE posts
+            SET status = 'active',
+                takedown_reason = NULL,
+                takedown_timestamp = NULL,
+                moderation_action = NULL,
+                moderation_reason = NULL,
+                moderated_at = NULL
+            WHERE post_id = ?
+        ''', (post_id,))
 
-            logger.info(f"Post {post_id} restored")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error restoring post {post_id}: {e}")
-            return False
+        logger.info(f"Post {post_id} restored")
+        return True

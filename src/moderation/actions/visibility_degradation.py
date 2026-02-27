@@ -43,34 +43,29 @@ class VisibilityDegradationAction:
         Returns:
             是否执行成功
         """
-        try:
-            # 获取降级系数
-            factor = self.config.visibility_degradation_factors.get(
-                verdict.severity,
-                0.5  # 默认降低 50%
-            )
+        # 获取降级系数
+        factor = self.config.visibility_degradation_factors.get(
+            verdict.severity,
+            0.5  # 默认降低 50%
+        )
 
-            # 更新裁决的降级系数
-            verdict.degradation_factor = factor
+        # 更新裁决的降级系数
+        verdict.degradation_factor = factor
 
-            # 更新数据库
-            self.repository.update_post_moderation(
-                post_id=verdict.post_id,
-                action="visibility_degradation",
-                degradation_factor=factor,
-                reason=verdict.reason,
-            )
+        # 更新数据库
+        self.repository.update_post_moderation(
+            post_id=verdict.post_id,
+            action="visibility_degradation",
+            degradation_factor=factor,
+            reason=verdict.reason,
+        )
 
-            logger.info(
-                f"Visibility degradation applied to post {verdict.post_id}: "
-                f"factor={factor}, severity={verdict.severity.value}"
-            )
+        logger.info(
+            f"Visibility degradation applied to post {verdict.post_id}: "
+            f"factor={factor}, severity={verdict.severity.value}"
+        )
 
-            return True
-
-        except Exception as e:
-            logger.error(f"Error executing visibility degradation: {e}")
-            return False
+        return True
 
     def get_factor(self, severity: ModerationSeverity) -> float:
         """
@@ -97,17 +92,12 @@ class VisibilityDegradationAction:
         Returns:
             是否执行成功
         """
-        try:
-            self.repository.update_post_moderation(
-                post_id=post_id,
-                action="none",
-                degradation_factor=1.0,
-                reason="降级已撤销",
-            )
+        self.repository.update_post_moderation(
+            post_id=post_id,
+            action="none",
+            degradation_factor=1.0,
+            reason="降级已撤销",
+        )
 
-            logger.info(f"Visibility degradation reverted for post {post_id}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error reverting visibility degradation: {e}")
-            return False
+        logger.info(f"Visibility degradation reverted for post {post_id}")
+        return True
