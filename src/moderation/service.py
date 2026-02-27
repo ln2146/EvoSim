@@ -286,14 +286,9 @@ class ModerationService:
         action_executor = self.actions.get(verdict.action)
 
         if not action_executor:
-            logger.warning(f"No executor for action: {verdict.action}")
-            return False
+            raise RuntimeError(f"No executor for action: {verdict.action}")
 
-        try:
-            return action_executor.execute(verdict)
-        except Exception as e:
-            logger.error(f"Error executing action {verdict.action}: {e}")
-            return False
+        return action_executor.execute(verdict)
 
     def get_stats(self) -> ModerationStats:
         """获取审核统计"""
@@ -328,31 +323,25 @@ class ModerationService:
         Returns:
             是否成功
         """
-        try:
-            # 获取最新的审核记录
-            verdicts = self.repository.get_by_post_id(post_id)
+        # 获取最新的审核记录
+        verdicts = self.repository.get_by_post_id(post_id)
 
-            if not verdicts:
-                logger.warning(f"No moderation record found for post {post_id}")
-                return False
+        if not verdicts:
+            raise RuntimeError(f"No moderation record found for post {post_id}")
 
-            latest_verdict = verdicts[0]
+        latest_verdict = verdicts[0]
 
-            # 根据动作类型执行撤销
-            if latest_verdict.action == ModerationAction.VISIBILITY_DEGRADATION:
-                return self.actions[ModerationAction.VISIBILITY_DEGRADATION].revert(post_id)
+        # 根据动作类型执行撤销
+        if latest_verdict.action == ModerationAction.VISIBILITY_DEGRADATION:
+            return self.actions[ModerationAction.VISIBILITY_DEGRADATION].revert(post_id)
 
-            elif latest_verdict.action == ModerationAction.WARNING_LABEL:
-                return self.actions[ModerationAction.WARNING_LABEL].revert(post_id)
+        elif latest_verdict.action == ModerationAction.WARNING_LABEL:
+            return self.actions[ModerationAction.WARNING_LABEL].revert(post_id)
 
-            elif latest_verdict.action == ModerationAction.HARD_TAKEDOWN:
-                return self.actions[ModerationAction.HARD_TAKEDOWN].restore_post(post_id)
+        elif latest_verdict.action == ModerationAction.HARD_TAKEDOWN:
+            return self.actions[ModerationAction.HARD_TAKEDOWN].restore_post(post_id)
 
-            return False
-
-        except Exception as e:
-            logger.error(f"Error reverting action for post {post_id}: {e}")
-            return False
+        raise RuntimeError(f"Unknown moderation action type: {latest_verdict.action} for post {post_id}")
 
 
 # 单例实例

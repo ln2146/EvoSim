@@ -142,15 +142,12 @@ class ModerationFilter:
         Returns:
             用户是否被封禁
         """
-        try:
-            user = fetch_one(
-                'SELECT status FROM users WHERE user_id = ?',
-                (candidate.author_id,)
-            )
-            if user and user.get('status') == 'banned':
-                return True
-        except Exception as e:
-            logger.debug(f"Error checking ban status for user {candidate.author_id}: {e}")
+        user = fetch_one(
+            'SELECT status FROM users WHERE user_id = ?',
+            (candidate.author_id,)
+        )
+        if user and user.get('status') == 'banned':
+            return True
 
         return False
 
@@ -164,15 +161,12 @@ class ModerationFilter:
         Returns:
             警告标签文字，如果没有则返回 None
         """
-        try:
-            post = fetch_one(
-                'SELECT moderation_label FROM posts WHERE post_id = ?',
-                (post_id,)
-            )
-            if post:
-                return post.get('moderation_label')
-        except Exception as e:
-            logger.debug(f"Error getting warning label for post {post_id}: {e}")
+        post = fetch_one(
+            'SELECT moderation_label FROM posts WHERE post_id = ?',
+            (post_id,)
+        )
+        if post:
+            return post.get('moderation_label')
 
         return None
 
