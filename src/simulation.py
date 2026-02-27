@@ -263,7 +263,13 @@ class Simulation:
             # Run moderation system (content review & intervention)
             # 完全由全局开关 control_flags.moderation_enabled 控制
             if control_flags.moderation_enabled:
-                await self._run_moderation_async(step)
+                try:
+                    await self._run_moderation_async(step)
+                except Exception as e:
+                    logging.error(
+                        f"🛡️ Time step {step + 1}: moderation check failed "
+                        f"(simulation continues): {type(e).__name__}: {e}"
+                    )
 
             # Discover the very first malicious news if not yet captured
             try:

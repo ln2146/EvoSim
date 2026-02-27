@@ -98,15 +98,24 @@ class OpenAIProvider:
             # 第三方兼容 API 可能需要 model 参数
             data["model"] = self.config.model
 
-        response = requests.post(
-            self.endpoint,
-            headers=headers,
-            json=data,
-            timeout=self.timeout,
-        )
+        try:
+            response = requests.post(
+                self.endpoint,
+                headers=headers,
+                json=data,
+                timeout=self.timeout,
+            )
+        except requests.exceptions.Timeout:
+            raise RuntimeError(f"OpenAI Moderation API timed out after {self.timeout}s")
+        except requests.exceptions.ConnectionError as e:
+            raise RuntimeError(f"OpenAI Moderation API connection failed: {e}")
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"OpenAI Moderation API request error: {e}")
 
         if response.status_code != 200:
-            raise RuntimeError(f"OpenAI Moderation API returned status {response.status_code}: {response.text}")
+            raise RuntimeError(
+                f"OpenAI Moderation API returned HTTP {response.status_code}: {response.text[:200]}"
+            )
 
         return response.json()
 

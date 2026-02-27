@@ -102,7 +102,11 @@ class CompositeProvider:
         优先级策略: 按顺序返回第一个有结果的裁决
         """
         for name, weight, provider in self.providers:
-            verdict = provider.check(content, metadata)
+            try:
+                verdict = provider.check(content, metadata)
+            except Exception as e:
+                logger.error(f"Provider '{name}' raised an error (skipped): {type(e).__name__}: {e}")
+                continue
             if verdict:
                 logger.debug(f"Provider '{name}' returned a verdict")
                 return verdict
@@ -120,7 +124,11 @@ class CompositeProvider:
         verdicts = []
 
         for name, weight, provider in self.providers:
-            verdict = provider.check(content, metadata)
+            try:
+                verdict = provider.check(content, metadata)
+            except Exception as e:
+                logger.error(f"Provider '{name}' raised an error (skipped): {type(e).__name__}: {e}")
+                continue
             if verdict:
                 # 加权置信度
                 weighted_confidence = verdict.confidence * weight
@@ -147,7 +155,11 @@ class CompositeProvider:
         verdicts = []
 
         for name, weight, provider in self.providers:
-            verdict = provider.check(content, metadata)
+            try:
+                verdict = provider.check(content, metadata)
+            except Exception as e:
+                logger.error(f"Provider '{name}' raised an error (skipped): {type(e).__name__}: {e}")
+                continue
             if verdict:
                 verdicts.append((name, verdict, weight))
 
