@@ -374,72 +374,65 @@ class ProcessManager:
             }
     
     def stop_all_processes(self) -> dict:
-        """停止所有进程
-        
-        遍历所有已记录的进程，使用 psutil.Process.terminate() 优雅关闭，
-        等待 3 秒后检查进程是否终止，对未终止的进程使用 kill() 强制关闭。
-        清理所有临时文件，重置进程记录字典。
-        
+        """停止所有进程并关闭终端窗口
+
+        先做一次进程扫描补全 PID，然后对每个进程：
+        1. 用 taskkill /F /T /PID 强制结束 Python 进程树
+        2. 找到父 cmd.exe，再用 taskkill /F /T /PID 关闭整个终端窗口
+
         Returns:
             dict: 停止结果（包含已停止进程列表和错误信息）
         """
         stopped = []
         errors = []
-        
-        for name, pid in self.processes.items():
+
+        # 补全未被记录的 PID（例如手动重启后 self.processes 为 None 的情况）
+        found = self._scan_processes_for_keywords()
+        for name, pid in found.items():
+            if pid is not None and not self.processes.get(name):
+                self.processes[name] = pid
+
+        for name, pid in list(self.processes.items()):
             if pid is None:
                 continue
-                
+
+            # 先尝试获取父 cmd.exe PID（必须在 kill 前拿，否则进程消失后拿不到）
+            parent_pid = None
             try:
                 proc = psutil.Process(pid)
-                
-                # 获取父进程（通常是 cmd.exe）
-                try:
-                    parent = proc.parent()
-                    parent_pid = parent.pid if parent else None
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    parent_pid = None
-                
-                # 1. 尝试优雅关闭 Python 进程
-                proc.terminate()
-                
-                # 2. 等待最多 3 秒
-                try:
-                    proc.wait(timeout=3)
-                    stopped.append(name)
-                except psutil.TimeoutExpired:
-                    # 3. 强制关闭 Python 进程
-                    proc.kill()
-                    proc.wait(timeout=1)
-                    stopped.append(name)
-                
-                # 4. 如果有父进程（cmd.exe），也关闭它以关闭终端窗口
-                if parent_pid:
-                    try:
-                        parent_proc = psutil.Process(parent_pid)
-                        # 检查父进程是否是 cmd.exe
-                        if 'cmd.exe' in parent_proc.name().lower():
-                            parent_proc.terminate()
-                            try:
-                                parent_proc.wait(timeout=2)
-                            except psutil.TimeoutExpired:
-                                parent_proc.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass  # 父进程可能已经关闭
-                    
-            except psutil.NoSuchProcess:
-                # 进程已经不存在
+                parent = proc.parent()
+                if parent and 'cmd' in parent.name().lower():
+                    parent_pid = parent.pid
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+
+            # 1. 用 taskkill /F /T 强制结束 Python 进程及其子进程树
+            try:
+                subprocess.run(
+                    ['taskkill', '/F', '/T', '/PID', str(pid)],
+                    capture_output=True, timeout=10
+                )
                 stopped.append(name)
             except Exception as e:
                 errors.append(f"{name}: {str(e)}")
-        
+
+            # 2. 结束父 cmd.exe 进程树，关闭终端窗口
+            if parent_pid:
+                try:
+                    subprocess.run(
+                        ['taskkill', '/F', '/T', '/PID', str(parent_pid)],
+                        capture_output=True, timeout=5
+                    )
+                except Exception:
+                    pass  # 父进程可能已随 Python 退出而自动关闭
+
         # 清理临时文件
         self._cleanup_temp_files()
-        self._cleanup_all_temp_files()  # 额外清理所有临时文件
-        
+        self._cleanup_all_temp_files()
+
         # 重置进程记录
         self.processes = {k: None for k in self.processes}
-        
+
         return {
             'success': len(errors) == 0,
             'message': 'All processes stopped' if not errors else 'Some processes failed to stop',

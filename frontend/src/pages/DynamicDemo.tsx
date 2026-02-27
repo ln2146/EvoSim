@@ -324,7 +324,7 @@ export default function DynamicDemo() {
 
   const [isRunning, setIsRunning] = useState(false)
   const [enableAttack, setEnableAttack] = useState(false)
-  const [enableAftercare, setEnableAftercare] = useState(false)
+  const [enableAftercare, setEnableAftercare] = useState(true)
   const [enableEvoCorps, setEnableEvoCorps] = useState(false)
   const [enableModeration, setEnableModeration] = useState(false)
 
@@ -370,8 +370,8 @@ export default function DynamicDemo() {
         // The panel should start streaming only after the user clicks the toggle (so we can
         // treat that moment as the "start time" for which logs should be shown).
 
-        // 同步恶意攻击、事后干预和内容审核的状态
-        if (data.control_flags) {
+        // 只在演示运行时同步控制标志，避免覆盖用户在启动前预置的状态
+        if (bothRunning && data.control_flags) {
           setEnableAttack(data.control_flags.attack_enabled ?? false)
           setEnableAftercare(data.control_flags.aftercare_enabled ?? false)
           setEnableModeration(data.control_flags.moderation_enabled ?? false)
@@ -524,6 +524,12 @@ export default function DynamicDemo() {
             const data = await response.json()
 
             if (data.success) {
+              // 捕获用户预置的标志（在 setIsRunning 前快照，避免轮询覆盖）
+              const preAttack = enableAttack
+              const preAftercare = enableAftercare
+              const preModeration = enableModeration
+              const preEvoCorps = enableEvoCorps
+
               // 成功：设置 isRunning 状态，连接 SSE
               setIsRunning(true)
               sse.connect()
@@ -538,6 +544,36 @@ export default function DynamicDemo() {
 
               // 3. 刷新热度榜数据
               await refetchLeaderboard()
+
+              // 4. 延迟同步预置标志到后端（等待控制服务器完全启动）
+              setTimeout(async () => {
+                const syncs: Array<Promise<unknown>> = []
+                if (preAttack) {
+                  syncs.push(fetch('http://localhost:8000/control/attack', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: true }),
+                  }).catch(() => {}))
+                }
+                if (!preAftercare) {
+                  syncs.push(fetch('http://localhost:8000/control/aftercare', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: false }),
+                  }).catch(() => {}))
+                }
+                if (preModeration) {
+                  syncs.push(fetch('/api/control/moderation', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: true }),
+                  }).catch(() => {}))
+                }
+                await Promise.allSettled(syncs)
+                if (preEvoCorps) {
+                  await fetch('/api/dynamic/opinion-balance/start', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                  }).catch(() => {})
+                }
+              }, 3000)
             } else {
               // 失败：显示错误消息
               alert(`启动失败：${data.message || '未知错误'}`)
@@ -615,6 +651,12 @@ export default function DynamicDemo() {
         onToggleAttack={async () => {
           if (isTogglingAttack) return
 
+          // 演示未运行时：仅预置本地状态，启动后自动同步到后端
+          if (!isRunning) {
+            setEnableAttack(!enableAttack)
+            return
+          }
+
           // 如果当前是启用状态，显示确认弹窗
           if (enableAttack) {
             if (!confirm('是否确认关闭恶意水军攻击？')) {
@@ -665,6 +707,12 @@ export default function DynamicDemo() {
         }}
         onToggleAftercare={async () => {
           if (isTogglingAftercare) return
+
+          // 演示未运行时：仅预置本地状态，启动后自动同步到后端
+          if (!isRunning) {
+            setEnableAftercare(!enableAftercare)
+            return
+          }
 
           // 如果当前是启用状态，显示确认弹窗
           if (enableAftercare) {
@@ -717,6 +765,12 @@ export default function DynamicDemo() {
         onToggleModeration={async () => {
           if (isTogglingModeration) return
 
+          // 演示未运行时：仅预置本地状态，启动后自动同步到后端
+          if (!isRunning) {
+            setEnableModeration(!enableModeration)
+            return
+          }
+
           // 乐观更新：先改变状态，让 UI 立即响应
           const newEnabled = !enableModeration
           setEnableModeration(newEnabled)
@@ -749,6 +803,12 @@ export default function DynamicDemo() {
           }
         }}
         onToggleEvoCorps={async () => {
+          // 演示未运行时：仅预置本地状态，启动后自动同步到后端
+          if (!isRunning) {
+            setEnableEvoCorps(!enableEvoCorps)
+            return
+          }
+
           const manageProcess = shouldCallOpinionBalanceProcessApi(USE_WORKFLOW_LOG_REPLAY)
           // 如果当前是禁用状态，则启用并调用 API
           if (!enableEvoCorps) {
