@@ -32,13 +32,8 @@ class UserRepository:
             关注的用户 ID 集合
         """
         query = 'SELECT followed_id FROM follows WHERE follower_id = ?'
-        try:
-            rows = fetch_all(query, (user_id,)) or []
-            return {str(r['followed_id']) for r in rows}
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return set()
-            raise
+        rows = fetch_all(query, (user_id,)) or []
+        return {str(r['followed_id']) for r in rows}
 
     def get_user_persona(self, user_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -55,12 +50,7 @@ class UserRepository:
             FROM users
             WHERE user_id = ?
         '''
-        try:
-            return fetch_one(query, (user_id,))
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return None
-            raise
+        return fetch_one(query, (user_id,))
 
     def get_exposed_post_ids(self, user_id: str) -> Set[str]:
         """
@@ -73,13 +63,8 @@ class UserRepository:
             已曝光的帖子 ID 集合
         """
         query = 'SELECT DISTINCT post_id FROM feed_exposures WHERE user_id = ?'
-        try:
-            rows = fetch_all(query, (user_id,)) or []
-            return {str(r['post_id']) for r in rows}
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return set()
-            raise
+        rows = fetch_all(query, (user_id,)) or []
+        return {str(r['post_id']) for r in rows}
 
     def get_recent_interactions(self, user_id: str, limit: int = 50) -> List[str]:
         """
@@ -102,13 +87,8 @@ class UserRepository:
             ORDER BY created_at DESC
             LIMIT ?
         '''
-        try:
-            rows = fetch_all(query, (user_id, limit)) or []
-            return [str(r['post_id']) for r in rows]
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return []
-            raise
+        rows = fetch_all(query, (user_id, limit)) or []
+        return [str(r['post_id']) for r in rows]
 
     def get_author_profiles_batch(self, author_ids: List[str]) -> Dict[str, Dict]:
         """
@@ -131,19 +111,14 @@ class UserRepository:
             FROM users
             WHERE user_id IN ({placeholders})
         '''
-        try:
-            rows = fetch_all(query, tuple(author_ids)) or []
-            return {
-                str(r['user_id']): {
-                    'follower_count': r['follower_count'] or 0,
-                    'influence_score': r['influence_score'] or 0.0,
-                }
-                for r in rows
+        rows = fetch_all(query, tuple(author_ids)) or []
+        return {
+            str(r['user_id']): {
+                'follower_count': r['follower_count'] or 0,
+                'influence_score': r['influence_score'] or 0.0,
             }
-        except Exception as e:
-            if "unable to open database file" in str(e):
-                return {}
-            raise
+            for r in rows
+        }
 
     def get_blocked_users(self, user_id: str) -> Set[str]:
         """
