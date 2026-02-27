@@ -1103,3 +1103,4 @@ if __name__ == "__main__":
     # Show final results
     print("\n✅ Simulation completed!")
     print("\n🎉 Thanks for using the social media simulation system!")
+    input("\nPress Enter to exit...")
