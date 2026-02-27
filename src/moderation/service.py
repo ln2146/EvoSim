@@ -204,8 +204,8 @@ class ModerationService:
             mod_log.info(
                 f"  [VERDICT] post={post_id} | "
                 f"action={action.value} | "
-                f"severity={verdict.severity.value} | "
-                f"category={verdict.category.value} | "
+                f"severity={verdict.severity} | "
+                f"category={verdict.category} | "
                 f"confidence={verdict.confidence:.2f}"
             )
             if action == ModerationAction.VISIBILITY_DEGRADATION:
@@ -223,8 +223,8 @@ class ModerationService:
 
             logger.info(
                 f"Moderation action executed: post={post_id}, "
-                f"action={action.value}, severity={verdict.severity.value}, "
-                f"category={verdict.category.value}"
+                f"action={action.value}, severity={verdict.severity}, "
+                f"category={verdict.category}"
             )
 
         return verdict
@@ -262,8 +262,9 @@ class ModerationService:
                 verdicts.append(verdict)
 
         # 批次汇总
-        action_counts = Counter(v.action.value for v in verdicts)
-        category_counts = Counter(v.category.value for v in verdicts)
+        # use_enum_values=True 使 verdict 字段已是字符串，无需 .value
+        action_counts = Counter(v.action for v in verdicts)
+        category_counts = Counter(v.category for v in verdicts)
         mod_log.info(
             f"[BATCH_END] checked={len(posts)} | flagged={len(verdicts)} | "
             f"actions={dict(action_counts)} | categories={dict(category_counts)}"
@@ -299,8 +300,8 @@ class ModerationService:
         if not self.provider:
             self._ensure_provider_initialized()
 
-        # 应用互动数阈值
-        threshold = min_engagement or self.config.check_threshold_engagement
+        # 应用互动数阈值（显式 None 判断，确保 min_engagement=0 生效）
+        threshold = min_engagement if min_engagement is not None else self.config.check_threshold_engagement
 
         # 过滤出需要检查的帖子
         posts_to_check = [

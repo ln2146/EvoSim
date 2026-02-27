@@ -320,15 +320,28 @@ class Simulation:
                     
                     if news_post_ids:
                         injected_news_posts.extend(news_post_ids)
-                        
+
                         # Track injected fake/opinion news post injection timestep (1-based)
                         for neg_info in negative_news_info:
                             post_id = neg_info.get('post_id')
                             if post_id and post_id not in self.fake_news_injection_timesteps:
                                 self.fake_news_injection_timesteps[post_id] = step + 1
-                        
+
                         new_post_count = self._get_current_post_count()
                         logging.info(f"Time step {step + 1}: injected {len(news_post_ids)} news posts (count: {current_post_count} → {new_post_count})")
+
+                        # 注入后立即审核新注入的新闻（min_engagement=0 确保不遗漏）
+                        if control_flags.moderation_enabled:
+                            try:
+                                injected_posts = self._get_posts_by_ids(news_post_ids)
+                                if injected_posts:
+                                    logging.info(f"🛡️ Time step {step + 1}: post-injection moderation checking {len(injected_posts)} newly injected news")
+                                    self.moderation_service.check_news_posts(injected_posts, min_engagement=0)
+                            except Exception as e:
+                                logging.error(
+                                    f"🛡️ Time step {step + 1}: post-injection moderation failed "
+                                    f"(simulation continues): {type(e).__name__}: {e}"
+                                )
                     else:
                         logging.info(f"Time step {step + 1}: news injection created no posts")
                 else:
@@ -670,12 +683,13 @@ class Simulation:
         else:
             action_counts = {}
             for verdict in verdicts:
-                action = verdict.action.value if verdict.action else "none"
+                # use_enum_values=True 使 verdict 字段已是字符串，无需 .value
+                action = verdict.action if verdict.action else "none"
                 action_counts[action] = action_counts.get(action, 0) + 1
                 # 详细记录每个裁决
                 logging.info(
                     f"🛡️ Moderation verdict: post={verdict.post_id[:8]}..., "
-                    f"action={action}, severity={verdict.severity.value if verdict.severity else 'N/A'}, "
+                    f"action={action}, severity={verdict.severity if verdict.severity else 'N/A'}, "
                     f"confidence={verdict.confidence:.2f if verdict.confidence else 0}"
                 )
 
@@ -732,6 +746,53 @@ class Simulation:
                 'num_shares': row[6] or 0,
                 'num_comments': row[7] or 0,
                 'time_step': row[8],
+            })
+
+        return posts
+
+    def _get_posts_by_ids(self, post_ids: list) -> list:
+        """
+        Get posts by their IDs for moderation.
+
+        Args:
+            post_ids: List of post IDs to retrieve
+
+        Returns:
+            List of post dictionaries suitable for moderation
+        """
+        if not post_ids:
+            return []
+
+        placeholders = ','.join('?' for _ in post_ids)
+        cursor = self.conn.cursor()
+        cursor.execute(f'''
+            SELECT
+                p.post_id,
+                p.content,
+                p.author_id,
+                p.is_news,
+                p.news_type,
+                p.num_likes,
+                p.num_shares,
+                p.num_comments
+            FROM posts p
+            WHERE p.post_id IN ({placeholders})
+            AND p.is_news = 1
+            AND (p.status IS NULL OR p.status != 'taken_down')
+        ''', post_ids)
+
+        posts = []
+        for row in cursor.fetchall():
+            posts.append({
+                'post_id': row[0],
+                'content': row[1],
+                'user_id': row[2],
+                'author_id': row[2],
+                'is_news': bool(row[3]),
+                'news_type': row[4],
+                'num_likes': row[5] or 0,
+                'num_shares': row[6] or 0,
+                'num_comments': row[7] or 0,
             })
 
         return posts
