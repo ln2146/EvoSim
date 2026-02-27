@@ -59,7 +59,7 @@ class WarningLabelAction:
 
         logger.info(
             f"Warning label applied to post {verdict.post_id}: "
-            f"label='{label_text}', category={verdict.category.value}"
+            f"label='{label_text}', category={verdict.category}"
         )
 
         return True
@@ -75,8 +75,8 @@ class WarningLabelAction:
             标签文字
         """
         # 优先使用配置中该分类的标签
-        if verdict.category.value in self.config.warning_labels:
-            return self.config.warning_labels[verdict.category.value]
+        if verdict.category in self.config.warning_labels:
+            return self.config.warning_labels[verdict.category]
 
         # 尝试使用枚举匹配
         for category_key, label in self.config.warning_labels.items():

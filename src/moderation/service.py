@@ -356,7 +356,7 @@ class ModerationService:
             )
 
         elif verdict.action == ModerationAction.WARNING_LABEL:
-            category = verdict.category.value
+            category = verdict.category
             verdict.label_text = self.config.actions.warning_labels.get(
                 category,
                 self.config.actions.warning_labels.get("other", "⚠️ 此内容需谨慎参考")

@@ -62,7 +62,7 @@ class VisibilityDegradationAction:
 
         logger.info(
             f"Visibility degradation applied to post {verdict.post_id}: "
-            f"factor={factor}, severity={verdict.severity.value}"
+            f"factor={factor}, severity={verdict.severity}"
         )
 
         return True

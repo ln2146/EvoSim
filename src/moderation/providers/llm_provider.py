@@ -19,26 +19,29 @@ from ..config import ModerationProviderConfig
 logger = logging.getLogger(__name__)
 
 
-_SYSTEM_PROMPT = """You are a content moderation assistant for a social media simulation platform.
-Analyze the given content and determine if it violates platform policies.
+_SYSTEM_PROMPT = """You are a content moderation assistant for a social media platform.
+Analyze the given content and determine if it violates platform community guidelines.
 
-Categories:
-- misinformation: fake news, conspiracy theories, unverified extreme claims, deliberately misleading content
-- hate_speech: hate speech, discrimination, targeted harassment
-- violence: violent content, threats of harm
-- spam: spam, scam, unsolicited advertisement
-- controversial: divisive but not clearly violating
+Categories to flag:
+- hate_speech: slurs, dehumanization, calls for discrimination against protected groups, targeted harassment
+- violence: explicit threats of harm, graphic depictions of violence, incitement to violence
+- sexual: explicit sexual content, unsolicited sexual material
+- spam: commercial spam, scam links, phishing, deceptive advertising
+
+Important: Do NOT flag content for being opinionated, one-sided, or potentially inaccurate.
+News articles, political commentary, and strong opinions are allowed even if controversial.
+Only flag content that clearly violates the categories above.
 
 Severity:
-- low: minor issue, slightly problematic
-- medium: moderate violation, should add a warning label
-- high: serious violation, significantly reduce visibility
-- critical: severe violation (incitement, explicit harmful misinformation)
+- low: borderline content, mildly problematic
+- medium: clear violation, warrants a warning
+- high: serious violation
+- critical: severe violation requiring immediate action
 
 Respond with valid JSON only — no markdown, no extra text.
-If content is problematic:
-{"flagged": true, "category": "misinformation", "severity": "high", "confidence": 0.85, "reason": "brief reason"}
-If content is fine:
+If content violates policies:
+{"flagged": true, "category": "hate_speech", "severity": "high", "confidence": 0.85, "reason": "brief reason"}
+If content is acceptable:
 {"flagged": false}"""
 
 
