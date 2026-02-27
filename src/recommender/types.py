@@ -99,7 +99,7 @@ class PostCandidate(BaseModel):
             agent_role=data.get('agent_role'),
             agent_response_type=data.get('agent_response_type'),
             intervention_id=data.get('intervention_id'),
-            moderation_degradation_factor=float(data.get('moderation_degradation_factor') or 1.0),
+            moderation_degradation_factor=float(data['moderation_degradation_factor']) if data.get('moderation_degradation_factor') is not None else 1.0,
             moderation_label=data.get('moderation_label'),
         )
 

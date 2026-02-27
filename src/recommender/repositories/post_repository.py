@@ -26,7 +26,8 @@ class PostRepository:
                p.num_likes, p.num_shares, p.num_flags, p.num_comments,
                p.original_post_id, p.is_news, p.news_type, p.status,
                p.is_agent_response, p.agent_role, p.agent_response_type,
-               p.intervention_id
+               p.intervention_id,
+               p.moderation_degradation_factor, p.moderation_label
         FROM posts p
     '''
 

@@ -6,6 +6,8 @@
 
 import asyncio
 import logging
+import os
+from collections import Counter
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
@@ -26,6 +28,33 @@ from .repository import get_repository
 
 
 logger = logging.getLogger(__name__)
+
+# 专属审核审计日志记录器
+_moderation_logger = None
+
+
+def _get_moderation_logger():
+    """获取或创建审核审计日志记录器，输出到 logs/moderation/"""
+    global _moderation_logger
+    if _moderation_logger is None:
+        log_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            'logs', 'moderation'
+        )
+        os.makedirs(log_dir, exist_ok=True)
+
+        log_file = os.path.join(log_dir, f'moderation_{datetime.now().strftime("%Y%m%d")}.log')
+
+        _moderation_logger = logging.getLogger('moderation.audit')
+        _moderation_logger.setLevel(logging.INFO)
+
+        if not _moderation_logger.handlers:
+            fh = logging.FileHandler(log_file, encoding='utf-8')
+            fh.setLevel(logging.INFO)
+            fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+            _moderation_logger.addHandler(fh)
+
+    return _moderation_logger
 
 
 class ModerationService:
@@ -106,6 +135,14 @@ class ModerationService:
         if not self.provider:
             raise RuntimeError(f"ModerationProvider not initialized but check_post() was called for post {post_id}")
 
+        mod_log = _get_moderation_logger()
+        content_preview = (content or '').replace('\n', ' ')[:80]
+        engagement = (metadata or {}).get('num_likes', 0) + (metadata or {}).get('num_shares', 0)
+        mod_log.info(
+            f"[CHECK] post={post_id} | user={user_id} | "
+            f"engagement={engagement} | content=\"{content_preview}\""
+        )
+
         # 更新统计
         self.stats.total_checked += 1
 
@@ -113,6 +150,7 @@ class ModerationService:
         verdict = self.provider.check(content, metadata)
 
         if verdict is None:
+            mod_log.info(f"  [PASS] post={post_id} | no action required")
             return None
 
         # 填充基础信息
@@ -123,6 +161,7 @@ class ModerationService:
         action = self._determine_action(verdict)
 
         if action == ModerationAction.NONE:
+            mod_log.info(f"  [PASS] post={post_id} | flagged but below action threshold")
             return None
 
         verdict.action = action
@@ -149,6 +188,26 @@ class ModerationService:
                 self.stats.category_counts.get(verdict.category, 0) + 1
             )
 
+            mod_log.info(
+                f"  [VERDICT] post={post_id} | "
+                f"action={action.value} | "
+                f"severity={verdict.severity.value} | "
+                f"category={verdict.category.value} | "
+                f"confidence={verdict.confidence:.2f}"
+            )
+            if action == ModerationAction.VISIBILITY_DEGRADATION:
+                mod_log.info(
+                    f"  [DEGRADATION] post={post_id} | "
+                    f"factor={getattr(verdict, 'degradation_factor', 'N/A')}"
+                )
+            elif action == ModerationAction.WARNING_LABEL:
+                mod_log.info(
+                    f"  [LABEL] post={post_id} | "
+                    f"text={getattr(verdict, 'label_text', 'N/A')}"
+                )
+            elif action == ModerationAction.HARD_TAKEDOWN:
+                mod_log.info(f"  [TAKEDOWN] post={post_id} | user={user_id} | content removed")
+
             logger.info(
                 f"Moderation action executed: post={post_id}, "
                 f"action={action.value}, severity={verdict.severity.value}, "
@@ -174,6 +233,9 @@ class ModerationService:
         if not self.provider:
             raise RuntimeError("ModerationProvider not initialized but check_batch() was called")
 
+        mod_log = _get_moderation_logger()
+        mod_log.info(f"[BATCH_START] posts_to_check={len(posts)}")
+
         verdicts = []
 
         for post in posts:
@@ -186,6 +248,13 @@ class ModerationService:
             if verdict:
                 verdicts.append(verdict)
 
+        # 批次汇总
+        action_counts = Counter(v.action.value for v in verdicts)
+        category_counts = Counter(v.category.value for v in verdicts)
+        mod_log.info(
+            f"[BATCH_END] checked={len(posts)} | flagged={len(verdicts)} | "
+            f"actions={dict(action_counts)} | categories={dict(category_counts)}"
+        )
         logger.info(f"Batch moderation completed: {len(verdicts)} actions taken")
         return verdicts
 
@@ -208,6 +277,8 @@ class ModerationService:
         import control_flags
         is_enabled = control_flags.moderation_enabled
 
+        mod_log = _get_moderation_logger()
+
         if not is_enabled:
             logger.warning(f"⚠️ Moderation service is DISABLED - skipping {len(posts)} posts (set moderation_enabled=True to enable)")
             return []
@@ -225,6 +296,11 @@ class ModerationService:
             if post.get("is_news", False)
             and (post.get("num_likes", 0) + post.get("num_shares", 0)) >= threshold
         ]
+
+        mod_log.info(
+            f"[NEWS_CHECK] total_posts={len(posts)} | threshold={threshold} | "
+            f"eligible={len(posts_to_check)} | skipped={len(posts) - len(posts_to_check)}"
+        )
 
         if not posts_to_check:
             logger.info(f"No news posts meet engagement threshold {threshold} (total posts: {len(posts)})")

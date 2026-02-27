@@ -6,6 +6,7 @@ Feed 推荐管道
 
 import logging
 import os
+from collections import Counter
 from datetime import datetime
 from typing import List, Optional
 
@@ -28,21 +29,22 @@ logger = logging.getLogger(__name__)
 # 创建专门的推荐算法详细日志记录器
 _pipeline_logger = None
 
+
 def _get_pipeline_logger():
     """获取或创建推荐管道详细日志记录器"""
     global _pipeline_logger
     if _pipeline_logger is None:
-        # 确保日志目录存在
-        log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs', 'recommender')
+        log_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            'logs', 'recommender'
+        )
         os.makedirs(log_dir, exist_ok=True)
 
-        # 创建以日期命名的日志文件
         log_file = os.path.join(log_dir, f'pipeline_{datetime.now().strftime("%Y%m%d")}.log')
 
         _pipeline_logger = logging.getLogger('recommender.pipeline')
         _pipeline_logger.setLevel(logging.INFO)
 
-        # 避免重复添加 handler
         if not _pipeline_logger.handlers:
             file_handler = logging.FileHandler(log_file, encoding='utf-8')
             file_handler.setLevel(logging.INFO)
@@ -76,6 +78,11 @@ class FeedPipeline:
         """
         self.config = config or RecommenderConfig()
         self._init_stages()
+
+    @property
+    def pipeline_log(self):
+        """返回推荐管道详细日志记录器（惰性初始化）"""
+        return _get_pipeline_logger()
 
     def _init_stages(self):
         """初始化管道各阶段组件"""
@@ -134,95 +141,134 @@ class FeedPipeline:
         Returns:
             Feed 响应
         """
-        pipeline_log = _get_pipeline_logger()
+        plog = self.pipeline_log
         start_time = datetime.now()
 
-        # 记录管道开始
-        pipeline_log.info(f"="*60)
-        pipeline_log.info(f"[PIPELINE START] user={request.user_id}, time_step={request.time_step}")
+        plog.info("=" * 60)
+        plog.info(f"[PIPELINE START] user={request.user_id}, time_step={request.time_step}")
 
         logger.debug(f"Executing feed pipeline for user {request.user_id}")
 
-        # 创建管道上下文
         ctx = self._create_context(request)
 
         # Stage 1: Query Hydration
-        stage1_start = datetime.now()
+        t0 = datetime.now()
         ctx = self._stage1_query_hydration(ctx)
-        stage1_duration = (datetime.now() - stage1_start).total_seconds()
-        pipeline_log.info(f"[Stage 1: Query Hydration] followed_count={len(ctx.user_context.followed_ids)}, duration={stage1_duration:.3f}s")
+        d1 = (datetime.now() - t0).total_seconds()
+        plog.info(
+            f"[Stage 1: Query Hydration] "
+            f"persona={ctx.user_context.persona or 'N/A'} | "
+            f"followed={len(ctx.user_context.followed_ids)} | "
+            f"blocked={len(ctx.user_context.blocked_ids)} | "
+            f"muted_kw={len(ctx.user_context.muted_keywords)} | "
+            f"duration={d1:.3f}s"
+        )
         logger.debug(f"Stage 1: User context hydrated, followed={len(ctx.user_context.followed_ids)}")
 
         # Stage 2: Candidate Sources
-        stage2_start = datetime.now()
+        t0 = datetime.now()
         ctx = self._stage2_candidate_retrieval(ctx)
-        stage2_duration = (datetime.now() - stage2_start).total_seconds()
+        d2 = (datetime.now() - t0).total_seconds()
         in_count = ctx.metadata.get('in_network_count', 0)
         out_count = ctx.metadata.get('out_network_count', 0)
         neg_count = ctx.metadata.get('negative_news_count', 0)
-        pipeline_log.info(f"[Stage 2: Candidate Retrieval] total={len(ctx.candidates)}, in_network={in_count}, out_network={out_count}, negative_news={neg_count}, duration={stage2_duration:.3f}s")
+        plog.info(
+            f"[Stage 2: Candidate Retrieval] "
+            f"total={len(ctx.candidates)}, in_network={in_count}, "
+            f"out_network={out_count}, negative_news={neg_count}, duration={d2:.3f}s"
+        )
+        for c in ctx.candidates:
+            plog.info(
+                f"  [CANDIDATE] post={c.post_id[:8]} | "
+                f"src={str(c.source):<13} | "
+                f"is_news={str(c.is_news):<5} | "
+                f"type={c.news_type or 'N/A':<4} | "
+                f"author={c.author_id} | "
+                f"likes={c.num_likes} shares={c.num_shares}"
+            )
         logger.debug(f"Stage 2: Retrieved {len(ctx.candidates)} candidates")
 
         # Stage 3: Candidate Hydration
-        stage3_start = datetime.now()
+        t0 = datetime.now()
         ctx = self._stage3_data_hydration(ctx)
-        stage3_duration = (datetime.now() - stage3_start).total_seconds()
-        pipeline_log.info(f"[Stage 3: Data Hydration] candidates_hydrated={len(ctx.candidates)}, duration={stage3_duration:.3f}s")
+        d3 = (datetime.now() - t0).total_seconds()
+        plog.info(f"[Stage 3: Data Hydration] candidates_hydrated={len(ctx.candidates)}, duration={d3:.3f}s")
+        for c in ctx.candidates:
+            if c.author_influence_score is not None:
+                plog.info(
+                    f"  [AUTHOR] post={c.post_id[:8]} | "
+                    f"author={c.author_id} | "
+                    f"influence={c.author_influence_score:.3f} | "
+                    f"followers={c.author_follower_count or 0}"
+                )
         logger.debug(f"Stage 3: Data hydration complete")
 
         # Stage 4: Pre-Scoring Filters
-        stage4_start = datetime.now()
+        t0 = datetime.now()
         before_filter = len(ctx.candidates)
         ctx = self._stage4_pre_scoring_filter(ctx)
-        stage4_duration = (datetime.now() - stage4_start).total_seconds()
+        d4 = (datetime.now() - t0).total_seconds()
         filtered_out = before_filter - len(ctx.candidates)
-        pipeline_log.info(f"[Stage 4: Pre-Scoring Filters] before={before_filter}, after={len(ctx.candidates)}, filtered_out={filtered_out}, duration={stage4_duration:.3f}s")
+        plog.info(
+            f"[Stage 4: Pre-Scoring Filters] "
+            f"before={before_filter}, after={len(ctx.candidates)}, "
+            f"filtered_out={filtered_out}, duration={d4:.3f}s"
+        )
         logger.debug(f"Stage 4: {len(ctx.candidates)} candidates after filtering")
 
         # Stage 5: Scoring
-        stage5_start = datetime.now()
+        t0 = datetime.now()
         ctx = self._stage5_scoring(ctx)
-        stage5_duration = (datetime.now() - stage5_start).total_seconds()
-        # 记录评分详情
-        top_scores = []
-        for i, c in enumerate(ctx.candidates[:5]):
-            top_scores.append(f"{c.post_id[:8]}:{c.final_score:.3f}" if c.final_score else f"{c.post_id[:8]}:N/A")
-        pipeline_log.info(f"[Stage 5: Scoring] candidates_scored={len(ctx.candidates)}, top5_scores=[{', '.join(top_scores)}], duration={stage5_duration:.3f}s")
+        d5 = (datetime.now() - t0).total_seconds()
+        top_scores = [
+            f"{c.post_id[:8]}:{c.final_score:.3f}"
+            for c in sorted(ctx.candidates, key=lambda x: x.final_score, reverse=True)[:5]
+        ]
+        plog.info(
+            f"[Stage 5: Scoring] "
+            f"candidates_scored={len(ctx.candidates)}, "
+            f"top5=[{', '.join(top_scores)}], duration={d5:.3f}s"
+        )
         logger.debug(f"Stage 5: Scoring complete")
 
         # Stage 6: Selection
-        stage6_start = datetime.now()
+        t0 = datetime.now()
         before_selection = len(ctx.candidates)
         ctx = self._stage6_selection(ctx)
-        stage6_duration = (datetime.now() - stage6_start).total_seconds()
-        pipeline_log.info(f"[Stage 6: Selection] before={before_selection}, selected={len(ctx.candidates)}, duration={stage6_duration:.3f}s")
+        d6 = (datetime.now() - t0).total_seconds()
+        plog.info(
+            f"[Stage 6: Selection] "
+            f"before={before_selection}, selected={len(ctx.candidates)}, duration={d6:.3f}s"
+        )
         logger.debug(f"Stage 6: Selected {len(ctx.candidates)} candidates")
 
         # Stage 7: Post-Selection Filters
-        stage7_start = datetime.now()
+        t0 = datetime.now()
         before_post = len(ctx.candidates)
         ctx = self._stage7_post_selection_filter(ctx)
-        stage7_duration = (datetime.now() - stage7_start).total_seconds()
+        d7 = (datetime.now() - t0).total_seconds()
         post_filtered = before_post - len(ctx.candidates)
-
-        # 检查审核过滤状态
         import control_flags
         moderation_status = "enabled" if control_flags.moderation_enabled else "disabled"
-        pipeline_log.info(f"[Stage 7: Post-Selection Filters] before={before_post}, final={len(ctx.candidates)}, filtered={post_filtered}, moderation={moderation_status}, duration={stage7_duration:.3f}s")
+        plog.info(
+            f"[Stage 7: Post-Selection Filters] "
+            f"before={before_post}, final={len(ctx.candidates)}, "
+            f"filtered={post_filtered}, moderation={moderation_status}, duration={d7:.3f}s"
+        )
         logger.debug(f"Stage 7: Final {len(ctx.candidates)} candidates")
 
-        # 记录管道完成
         total_duration = (datetime.now() - start_time).total_seconds()
-        pipeline_log.info(f"[PIPELINE END] user={request.user_id}, final_feed_size={len(ctx.candidates)}, total_duration={total_duration:.3f}s")
-        pipeline_log.info(f"")
+        plog.info(
+            f"[PIPELINE END] user={request.user_id}, "
+            f"final_feed_size={len(ctx.candidates)}, total_duration={total_duration:.3f}s"
+        )
+        plog.info("")
 
         return self._build_response(ctx)
 
     def _create_context(self, request: FeedRequest) -> PipelineContext:
         """创建管道上下文"""
-        # 获取帖子时间步映射
         post_timesteps = self.post_repo.get_post_timesteps()
-
         return PipelineContext(
             request=request,
             user_context=UserContext(user_id=request.user_id),
@@ -240,25 +286,18 @@ class FeedPipeline:
         """阶段2: 候选召回 - 双轨召回"""
         max_per_source = self.config.source.max_candidates_per_source
 
-        # In-Network 召回 (关注流)
         in_network = self.in_network_source.retrieve(
             ctx.user_context,
             max_candidates=max_per_source
         )
-
-        # Out-Network 召回 (热点流)
         out_network = self.out_network_source.retrieve(
             ctx.user_context,
             max_candidates=max_per_source
         )
-
-        # 负面新闻召回
         negative_news = self.out_network_source.retrieve_negative_news(ctx.user_context)
 
-        # 合并候选
         ctx.candidates = in_network + out_network + negative_news
 
-        # 记录召回统计
         ctx.add_metadata('in_network_count', len(in_network))
         ctx.add_metadata('out_network_count', len(out_network))
         ctx.add_metadata('negative_news_count', len(negative_news))
@@ -276,16 +315,35 @@ class FeedPipeline:
         return ctx
 
     def _stage4_pre_scoring_filter(self, ctx: PipelineContext) -> PipelineContext:
-        """阶段4: 预评分过滤"""
-        ctx.candidates = self.pre_scoring_filters.filter(
+        """阶段4: 预评分过滤（带审计日志）"""
+        plog = self.pipeline_log
+
+        candidates, audit = self.pre_scoring_filters.filter_with_audit(
             ctx.candidates,
             ctx.user_context,
             self.config.filter
         )
+        ctx.candidates = candidates
+
+        if audit:
+            reason_counts = Counter(entry['reason'] for entry in audit)
+            for entry in audit:
+                plog.info(
+                    f"  [FILTERED] post={entry['post_id'][:8]} | "
+                    f"reason={entry['reason']:<20} | "
+                    f"author={entry['author_id']}"
+                )
+            plog.info(
+                f"  [FILTER_SUMMARY] " +
+                " | ".join(f"{r}={c}" for r, c in sorted(reason_counts.items()))
+            )
+
         return ctx
 
     def _stage5_scoring(self, ctx: PipelineContext) -> PipelineContext:
-        """阶段5: 评分"""
+        """阶段5: 评分（带完整评分表日志）"""
+        plog = self.pipeline_log
+
         # 5.1 基础加权评分
         ctx.candidates = self.weighted_scorer.score(
             ctx.candidates,
@@ -308,21 +366,73 @@ class FeedPipeline:
         # 5.4 作者多样性惩罚
         ctx.candidates = self.diversity_scorer.apply_penalty(ctx.candidates)
 
+        # 完整评分表（按 final_score 降序）
+        for c in sorted(ctx.candidates, key=lambda x: x.final_score, reverse=True):
+            src_tag = str(c.source).split('.')[-1] if '.' in str(c.source) else str(c.source)
+            src_tag = src_tag[:3].upper()
+            news_tag = f"news/{c.news_type or 'N/A'}" if c.is_news else "non-news    "
+            plog.info(
+                f"  [SCORE] post={c.post_id[:8]} | "
+                f"weighted={c.weighted_score:7.2f} | "
+                f"embed={c.embedding_score:.3f} | "
+                f"oon={c.oon_adjustment:.2f} | "
+                f"div={c.diversity_penalty:.2f} | "
+                f"final={c.final_score:7.3f} | "
+                f"{src_tag} | {news_tag}"
+            )
+
         return ctx
 
     def _stage6_selection(self, ctx: PipelineContext) -> PipelineContext:
-        """阶段6: 选择"""
+        """阶段6: 选择（带每个入选帖子的日志）"""
+        plog = self.pipeline_log
         ctx.candidates = self.selector.select(ctx.candidates)
+
+        for rank, c in enumerate(ctx.candidates, 1):
+            src_tag = str(c.source).split('.')[-1] if '.' in str(c.source) else str(c.source)
+            src_tag = src_tag[:3].upper()
+            news_tag = f"news/{c.news_type or 'N/A'}" if c.is_news else "non-news"
+            plog.info(
+                f"  [SELECTED] rank={rank:2d} | "
+                f"post={c.post_id[:8]} | "
+                f"segment={c.feed_segment:<9} | "
+                f"score={c.final_score:7.3f} | "
+                f"{news_tag:<14} | {src_tag}"
+            )
+
         return ctx
 
     def _stage7_post_selection_filter(self, ctx: PipelineContext) -> PipelineContext:
-        """阶段7: 后选择过滤"""
+        """阶段7: 后选择过滤（带审核降级/移除日志）"""
+        plog = self.pipeline_log
         ctx.candidates = self.post_selection_filters.filter(ctx.candidates)
 
-        # Apply moderation filter (if enabled via control_flags)
         import control_flags
         if control_flags.moderation_enabled:
+            # 在审核前快照分数和 ID，用于对比
+            before_scores = {c.post_id: c.final_score for c in ctx.candidates}
+            before_ids = {c.post_id for c in ctx.candidates}
+
             ctx.candidates = self.moderation_filter.filter(ctx.candidates)
+
+            after_ids = {c.post_id for c in ctx.candidates}
+
+            # 记录被降级的帖子（分数发生变化）
+            for c in ctx.candidates:
+                old_score = before_scores.get(c.post_id, c.final_score)
+                if c.final_score < old_score - 0.001:
+                    plog.info(
+                        f"  [MOD:DEGRADED] post={c.post_id[:8]} | "
+                        f"factor={c.moderation_degradation_factor:.2f} | "
+                        f"score {old_score:.3f}->{c.final_score:.3f} | "
+                        f"label={c.moderation_label or 'none'}"
+                    )
+
+            # 记录被移除的帖子
+            for post_id in before_ids - after_ids:
+                plog.info(f"  [MOD:REMOVED] post={post_id[:8]}")
+        else:
+            plog.info("  [MOD:SKIP] moderation disabled")
 
         return ctx
 

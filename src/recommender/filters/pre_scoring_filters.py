@@ -4,7 +4,8 @@
 阶段4: 在评分前过滤不合格的候选帖子
 """
 
-from typing import List
+from collections import Counter
+from typing import Any, Dict, List, Tuple
 from ..types import PostCandidate, UserContext
 from ..config import FilterConfig
 
@@ -63,6 +64,98 @@ class PreScoringFilters:
             filtered = self._filter_min_content_length(filtered, config.min_content_length)
 
         return filtered
+
+    def filter_with_audit(
+        self,
+        candidates: List[PostCandidate],
+        user_context: UserContext,
+        config: FilterConfig
+    ) -> Tuple[List[PostCandidate], List[Dict[str, Any]]]:
+        """
+        应用所有预评分过滤器，同时返回每条过滤原因的审计日志
+
+        Returns:
+            (filtered_candidates, audit_log)
+            audit_log 每项: {post_id, author_id, reason}
+        """
+        audit: List[Dict[str, Any]] = []
+        current = list(candidates)
+
+        # 1. 去重
+        seen_ids: set = set()
+        after: List[PostCandidate] = []
+        for c in current:
+            if c.post_id in seen_ids:
+                audit.append({'post_id': c.post_id, 'author_id': c.author_id, 'reason': 'duplicate'})
+            else:
+                seen_ids.add(c.post_id)
+                after.append(c)
+        current = after
+
+        # 2. 自己帖子
+        if config.filter_self_posts:
+            after = []
+            for c in current:
+                if c.author_id == user_context.user_id:
+                    audit.append({'post_id': c.post_id, 'author_id': c.author_id, 'reason': 'self_post'})
+                else:
+                    after.append(c)
+            current = after
+
+        # 3. 已下架
+        if config.filter_taken_down:
+            after = []
+            for c in current:
+                if c.status == 'taken_down':
+                    audit.append({'post_id': c.post_id, 'author_id': c.author_id, 'reason': 'taken_down'})
+                else:
+                    after.append(c)
+            current = after
+
+        # 4. 屏蔽作者
+        if config.filter_blocked_authors and user_context.blocked_ids:
+            after = []
+            for c in current:
+                if c.author_id in user_context.blocked_ids:
+                    audit.append({'post_id': c.post_id, 'author_id': c.author_id, 'reason': 'blocked_author'})
+                else:
+                    after.append(c)
+            current = after
+
+        # 5. 已曝光
+        if config.filter_seen_posts and user_context.seen_post_ids:
+            after = []
+            for c in current:
+                if c.post_id in user_context.seen_post_ids:
+                    audit.append({'post_id': c.post_id, 'author_id': c.author_id, 'reason': 'already_seen'})
+                else:
+                    after.append(c)
+            current = after
+
+        # 6. 屏蔽关键词
+        if user_context.muted_keywords:
+            def _has_muted(content: str) -> bool:
+                cl = (content or '').lower()
+                return any(kw.lower() in cl for kw in user_context.muted_keywords)
+            after = []
+            for c in current:
+                if _has_muted(c.content):
+                    audit.append({'post_id': c.post_id, 'author_id': c.author_id, 'reason': 'muted_keyword'})
+                else:
+                    after.append(c)
+            current = after
+
+        # 7. 最小内容长度
+        if config.min_content_length > 0:
+            after = []
+            for c in current:
+                if len(c.content or '') < config.min_content_length:
+                    audit.append({'post_id': c.post_id, 'author_id': c.author_id, 'reason': 'too_short'})
+                else:
+                    after.append(c)
+            current = after
+
+        return current, audit
 
     def _drop_duplicates(self, candidates: List[PostCandidate]) -> List[PostCandidate]:
         """去重过滤"""
