@@ -179,7 +179,9 @@ class ProcessManager:
             f.write(f') | "{self.python_exe}" {script_path}\n')
             # pause 让用户确认后再 exit，避免终端自动关闭
             f.write('pause\n')
-            f.write('exit\n')
+            # 注意：移除 exit 命令，让终端在模拟结束后保持打开状态
+            # 用户可以手动关闭终端窗口
+            # f.write('exit\n')
         
         # 记录临时文件路径用于后续清理
         self.temp_files.append(bat_file)
@@ -289,6 +291,9 @@ class ProcessManager:
             db_pid = self.processes.get('database') if db_running else None
             main_pid = self.processes.get('main') if main_running else None
 
+            # 并行启动：先快速启动两个终端，不等待初始化完成
+            # 这样可以让用户尽快看到终端窗口弹出
+
             # 启动数据库服务（如果尚未运行）
             if not db_running:
                 db_script = 'src/start_database_service.py'
@@ -298,24 +303,20 @@ class ProcessManager:
                         'message': f'Database script not found: {db_script}',
                         'error': 'FileNotFound'
                     }
-                
+
                 self._start_process_in_terminal(
                     script_path=db_script,
                     title='EvoCorps-Database',
                     auto_inputs=None,
                     conda_env=conda_env
                 )
-                
-                # 等待进程启动后通过 _is_process_running 来获取 PID
-                time.sleep(2)
+
+                # 短暂等待进程创建（仅确认终端已弹出）
+                time.sleep(0.5)
                 if self._is_process_running('database'):
                     db_pid = self.processes.get('database')
-                
-                # 等待 5 秒让数据库初始化
-                print("等待数据库服务初始化...")
-                time.sleep(5)
-            
-            # 创建自动输入脚本并启动主程序
+
+            # 立即启动主程序（不等待数据库完全初始化）
             main_script = 'src/main.py'
             if not os.path.exists(main_script):
                 return {
@@ -323,21 +324,21 @@ class ProcessManager:
                     'message': f'Main script not found: {main_script}',
                     'error': 'FileNotFound'
                 }
-            
+
             # 启动主程序（如果尚未运行）
             if not main_running:
                 # 输入序列：n, y, n, n, Enter
                 auto_inputs = ['n', 'y', 'n', 'n', '']
-                
+
                 self._start_process_in_terminal(
                     script_path=main_script,
                     title='EvoCorps-Main',
                     auto_inputs=auto_inputs,
                     conda_env=conda_env
                 )
-                
-                # 等待主程序启动
-                time.sleep(2)
+
+                # 短暂等待进程创建（仅确认终端已弹出）
+                time.sleep(0.5)
                 if self._is_process_running('main'):
                     main_pid = self.processes.get('main')
             
