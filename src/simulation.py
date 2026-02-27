@@ -29,7 +29,6 @@ from tracked_opinion_helper import (
 
 # Moderation system
 from moderation import ModerationService, ModerationConfig, load_config_from_env
-from keys import OPENAI_API_KEY, OPENAI_BASE_URL
 
 
 class Simulation:
@@ -122,12 +121,8 @@ class Simulation:
         # Initialize moderation service
         moderation_config = load_config_from_env()
 
-        # 使用与仿真主体相同的 LLM 端点进行语义级内容审核
-        # 无需独立的 OpenAI 账户，复用现有 API 基础设施
+        # LLM 审核通过 multi_model_selector 统一管理，无需在此注入 API 配置
         moderation_config.llm_provider.enabled = True
-        moderation_config.llm_provider.api_key = OPENAI_API_KEY
-        moderation_config.llm_provider.api_endpoint = OPENAI_BASE_URL
-        moderation_config.llm_provider.model = self.engine  # 与仿真使用相同模型
 
         # 关键词审核作为兜底（LLM 调用失败时仍能捕获明显违规）
         moderation_config.keyword_provider.enabled = True

@@ -3,6 +3,8 @@ LLM 审核提供者
 
 使用与仿真主体相同的 LLM 端点（Gemini via OpenAI-compatible proxy）
 进行语义级内容审核，能够识别阴谋论、隐晦假新闻等关键词无法覆盖的内容。
+
+通过 multi_model_selector 统一管理 LLM 客户端（与其他 Agent 共享 API 配置和限速）。
 """
 
 import json
@@ -10,13 +12,12 @@ import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from openai import OpenAI
-
 from ..types import ModerationVerdict, ModerationSeverity, ModerationCategory
 from ..config import ModerationProviderConfig
 
 
 logger = logging.getLogger(__name__)
+
 
 _SYSTEM_PROMPT = """You are a content moderation assistant for a social media simulation platform.
 Analyze the given content and determine if it violates platform policies.
@@ -46,21 +47,11 @@ class LLMProvider:
     LLM 审核提供者
 
     通过 LLM 对内容进行语义级审核，准确率远高于关键词匹配。
-    使用与仿真主体相同的 API 端点，无需额外密钥或服务。
+    使用 multi_model_selector 统一管理 API 客户端，与仿真主体共享 API 基础设施。
     """
 
     def __init__(self, config: ModerationProviderConfig):
         self.config = config
-        self.model = config.model or "gemini-2.0-flash"
-        self._client: Optional[OpenAI] = None
-
-    def _get_client(self) -> OpenAI:
-        if self._client is None:
-            self._client = OpenAI(
-                api_key=self.config.api_key,
-                base_url=self.config.api_endpoint,
-            )
-        return self._client
 
     def check(self, content: str, metadata: Dict[str, Any] = None) -> Optional[ModerationVerdict]:
         """
@@ -76,18 +67,16 @@ class LLMProvider:
         if not self.config.enabled:
             return None
 
-        if not self.config.api_key:
-            logger.warning("LLM moderation provider: api_key not configured")
-            return None
-
         raw_text = self._call_llm(content)
         return self._parse_response(raw_text, content, metadata)
 
     def _call_llm(self, content: str) -> str:
-        """调用 LLM 获取审核结果"""
+        """调用 LLM 获取审核结果（通过 multi_model_selector 统一管理客户端）"""
         try:
-            response = self._get_client().chat.completions.create(
-                model=self.model,
+            from multi_model_selector import multi_model_selector
+            client, model_name = multi_model_selector.create_openai_client(role="moderation")
+            response = client.chat.completions.create(
+                model=model_name,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": f"Moderate this content:\n\n{content[:2000]}"},

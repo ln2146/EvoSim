@@ -55,7 +55,9 @@ class MultiModelSelector:
         "experiment": DEFAULT_POOL,
         "interview": DEFAULT_POOL,
         "comment_diversity": DEFAULT_POOL,
-        # Embedding role 
+        # Moderation role (content moderation LLM calls)
+        "moderation": DEFAULT_POOL,
+        # Embedding role
         "embedding": [EMBEDDING_MODEL],
     }
 
