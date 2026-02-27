@@ -45,7 +45,7 @@
         "standalone_mode": true
     },
     "malicious_bot_system": {
-        "enabled": true,
+        "enabled": false,
         "cluster_size": 15,
         "attack_probability": 1.0,
         "target_post_types": [

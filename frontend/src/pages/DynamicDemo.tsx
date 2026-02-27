@@ -324,7 +324,7 @@ export default function DynamicDemo() {
 
   const [isRunning, setIsRunning] = useState(false)
   const [enableAttack, setEnableAttack] = useState(false)
-  const [enableAftercare, setEnableAftercare] = useState(true)
+  const [enableAftercare, setEnableAftercare] = useState(false)
   const [enableEvoCorps, setEnableEvoCorps] = useState(false)
   const [enableModeration, setEnableModeration] = useState(false)
 

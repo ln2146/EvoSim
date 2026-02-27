@@ -177,7 +177,8 @@ class ProcessManager:
                 else:
                     f.write(f'echo {inp}\n')
             f.write(f') | "{self.python_exe}" {script_path}\n')
-            # 添加 exit 命令，确保批处理执行完毕后立即退出，不显示任何提示
+            # pause 让用户确认后再 exit，避免终端自动关闭
+            f.write('pause\n')
             f.write('exit\n')
         
         # 记录临时文件路径用于后续清理
@@ -209,7 +210,8 @@ class ProcessManager:
             cmd = f'cmd /c start "{title}" cmd /c "{bat_file}"'
         else:
             # 直接启动，使用当前 Python 解释器
-            cmd = f'cmd /c start "{title}" cmd /c ""{self.python_exe}" {script_path} & exit"'
+            # pause 让用户按任意键后再 exit，避免终端自动关闭
+            cmd = f'cmd /c start "{title}" cmd /c ""{self.python_exe}" {script_path} & pause & exit"'
         
         process = subprocess.Popen(cmd, shell=True)
         return process
