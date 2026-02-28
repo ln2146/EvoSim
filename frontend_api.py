@@ -101,7 +101,33 @@ class ProcessManager:
                 continue
 
         return found
-    
+
+    def _is_process_running_fast(self, process_name: str) -> bool:
+        """快速检查进程是否运行（仅检查已记录的 PID，不扫描全系统）
+
+        Args:
+            process_name: 进程名称 ('database', 'main', 'opinion_balance')
+
+        Returns:
+            bool: 进程是否正在运行
+        """
+        if self.processes.get(process_name):
+            pid = self.processes[process_name]
+            try:
+                proc = psutil.Process(pid)
+                if proc.is_running():
+                    cmdline = ' '.join(proc.cmdline())
+                    keywords = {
+                        'database': 'start_database_service.py',
+                        'main': 'main.py',
+                        'opinion_balance': 'opinion_balance_launcher.py'
+                    }
+                    if keywords[process_name] in cmdline:
+                        return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        return False
+
     def _is_process_running(self, process_name: str) -> bool:
         """检查进程是否运行（内部方法）
         
@@ -188,33 +214,34 @@ class ProcessManager:
         return bat_file
     
     def _start_process_in_terminal(
-        self, 
-        script_path: str, 
+        self,
+        script_path: str,
         title: str,
         auto_inputs: Optional[List[str]] = None,
         conda_env: Optional[str] = None
     ) -> subprocess.Popen:
         """在新终端启动进程（内部方法）
-        
+
         Args:
             script_path: 要运行的 Python 脚本路径
             title: 终端窗口标题
             auto_inputs: 自动输入序列（可选）
             conda_env: conda 环境名称（已废弃，保留兼容性）
-            
+
         Returns:
             subprocess.Popen: 进程对象
         """
         if auto_inputs:
             # 创建临时批处理文件（包含 exit 命令）
             bat_file = self._create_auto_input_script(script_path, auto_inputs, conda_env)
-            # 直接启动批处理文件
-            cmd = f'cmd /c start "{title}" cmd /c "{bat_file}"'
+            # 使用 Windows Terminal (wt) 启动，速度更快
+            # -w 0: 新窗口, -t: 标题, --: 后面是要执行的命令
+            cmd = f'wt -w 0 -t "{title}" -- cmd /k "{bat_file}"'
         else:
             # 直接启动，使用当前 Python 解释器
-            # pause 让用户按任意键后再 exit，避免终端自动关闭
-            cmd = f'cmd /c start "{title}" cmd /c ""{self.python_exe}" {script_path} & pause & exit"'
-        
+            # 使用 Windows Terminal (wt) 启动，速度更快
+            cmd = f'wt -w 0 -t "{title}" -- cmd /k ""{self.python_exe}" {script_path} & pause"'
+
         process = subprocess.Popen(cmd, shell=True)
         return process
     
@@ -266,12 +293,9 @@ class ProcessManager:
             dict: 启动结果
         """
         try:
-            # 清理旧的临时文件
-            self._cleanup_all_temp_files()
-            
-            # 检查数据库和主程序是否已运行
-            db_running = self._is_process_running('database')
-            main_running = self._is_process_running('main')
+            # 快速检查：仅检查已记录的 PID，跳过全系统扫描
+            db_running = self._is_process_running_fast('database')
+            main_running = self._is_process_running_fast('main')
 
             # If everything is already running, treat it as success (idempotent start).
             if db_running and main_running:
@@ -289,12 +313,9 @@ class ProcessManager:
                         }
                     }
                 }
-            
+
             db_pid = self.processes.get('database') if db_running else None
             main_pid = self.processes.get('main') if main_running else None
-
-            # 并行启动：先快速启动两个终端，不等待初始化完成
-            # 这样可以让用户尽快看到终端窗口弹出
 
             # 启动数据库服务（如果尚未运行）
             if not db_running:
@@ -313,12 +334,7 @@ class ProcessManager:
                     conda_env=conda_env
                 )
 
-                # 短暂等待进程创建（仅确认终端已弹出）
-                time.sleep(0.5)
-                if self._is_process_running('database'):
-                    db_pid = self.processes.get('database')
-
-            # 立即启动主程序（不等待数据库完全初始化）
+            # 立即启动主程序（不等待数据库）
             main_script = 'src/main.py'
             if not os.path.exists(main_script):
                 return {
@@ -331,10 +347,6 @@ class ProcessManager:
             if not main_running:
                 # 根据前端预置标志动态生成输入序列
                 # 输入序列: [恶意攻击, 舆论平衡, 事后干预, 预启动, 确认]
-                # 恶意攻击: enable_attack -> 'y' or 'n'
-                # 舆论平衡: 始终选择 standalone mode -> 'y'
-                # 事后干预: enable_aftercare -> 'y' or 'n'
-                # 预启动: 始终不启用 -> 'n'
                 auto_inputs = [
                     'y' if enable_attack else 'n',   # 恶意攻击
                     'y',                              # 舆论平衡 (standalone)
@@ -350,11 +362,6 @@ class ProcessManager:
                     conda_env=conda_env
                 )
 
-                # 短暂等待进程创建（仅确认终端已弹出）
-                time.sleep(0.5)
-                if self._is_process_running('main'):
-                    main_pid = self.processes.get('main')
-            
             return {
                 'success': True,
                 'message': 'Dynamic demo started successfully',

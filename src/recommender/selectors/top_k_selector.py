@@ -34,13 +34,11 @@ class TopKSelector:
             选中的帖子列表
         """
         # 分离新闻和非新闻
-        news = [c for c in candidates if c.is_news and c.news_type != 'fake']
-        negative_news = [c for c in candidates if c.is_news and c.news_type == 'fake']
+        news = [c for c in candidates if c.is_news]
         non_news = [c for c in candidates if not c.is_news]
 
         # 按分数排序
         news.sort(key=lambda c: c.final_score, reverse=True)
-        negative_news.sort(key=lambda c: c.final_score, reverse=True)
         non_news.sort(key=lambda c: c.final_score, reverse=True)
 
         selected = []
@@ -74,18 +72,7 @@ class TopKSelector:
                 selected.append(p)
                 seen_ids.add(p.post_id)
 
-        # 3. 负面新闻加权随机采样
-        negative_selected = self._weighted_sample(
-            [n for n in negative_news if n.post_id not in seen_ids],
-            pick_n=self.config.negative_news_pick_n
-        )
-        for p in negative_selected:
-            if p.post_id not in seen_ids:
-                p.feed_segment = 'secondary'
-                selected.append(p)
-                seen_ids.add(p.post_id)
-
-        # 4. 非新闻采样
+        # 3. 非新闻采样
         non_news_selected = self._rank_and_sample(
             non_news,
             pick_n=self.config.non_news_pick_n,
