@@ -28,10 +28,6 @@ Categories to flag:
 - sexual: explicit sexual content, unsolicited sexual material
 - spam: commercial spam, scam links, phishing, deceptive advertising
 
-Important: Do NOT flag content for being opinionated, one-sided, or potentially inaccurate.
-News articles, political commentary, and strong opinions are allowed even if controversial.
-Only flag content that clearly violates the categories above.
-
 Severity:
 - low: borderline content, mildly problematic
 - medium: clear violation, warrants a warning

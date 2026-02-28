@@ -329,19 +329,6 @@ class Simulation:
 
                         new_post_count = self._get_current_post_count()
                         logging.info(f"Time step {step + 1}: injected {len(news_post_ids)} news posts (count: {current_post_count} → {new_post_count})")
-
-                        # 注入后立即审核新注入的新闻（min_engagement=0 确保不遗漏）
-                        if control_flags.moderation_enabled:
-                            try:
-                                injected_posts = self._get_posts_by_ids(news_post_ids)
-                                if injected_posts:
-                                    logging.info(f"🛡️ Time step {step + 1}: post-injection moderation checking {len(injected_posts)} newly injected news")
-                                    self.moderation_service.check_news_posts(injected_posts, min_engagement=0)
-                            except Exception as e:
-                                logging.error(
-                                    f"🛡️ Time step {step + 1}: post-injection moderation failed "
-                                    f"(simulation continues): {type(e).__name__}: {e}"
-                                )
                     else:
                         logging.info(f"Time step {step + 1}: news injection created no posts")
                 else:
@@ -669,10 +656,10 @@ class Simulation:
         posts_to_check = self._get_posts_for_moderation(step)
 
         if not posts_to_check:
-            logging.info(f"🛡️ Time step {step + 1}: no news posts to moderate")
+            logging.info(f"🛡️ Time step {step + 1}: no posts to moderate")
             return
 
-        logging.info(f"🛡️ Time step {step + 1}: checking {len(posts_to_check)} news posts")
+        logging.info(f"🛡️ Time step {step + 1}: checking {len(posts_to_check)} posts")
 
         # Process moderation (can batch multiple posts)
         verdicts = self.moderation_service.check_news_posts(posts_to_check)
@@ -690,7 +677,7 @@ class Simulation:
                 logging.info(
                     f"🛡️ Moderation verdict: post={verdict.post_id[:8]}..., "
                     f"action={action}, severity={verdict.severity if verdict.severity else 'N/A'}, "
-                    f"confidence={verdict.confidence:.2f if verdict.confidence else 0}"
+                    f"confidence={(verdict.confidence if verdict.confidence is not None else 0):.2f}"
                 )
 
             logging.info(
@@ -708,7 +695,7 @@ class Simulation:
         Returns:
             List of post dictionaries
         """
-        # Get news posts from the current and recent timesteps
+        # Get posts from the current and recent timesteps
         # We check posts from the current timestep and previous 2 timesteps
         min_timestep = max(0, step - 1)
 
@@ -726,9 +713,7 @@ class Simulation:
                 pt.time_step
             FROM posts p
             LEFT JOIN post_timesteps pt ON p.post_id = pt.post_id
-            WHERE p.is_news = 1
-            AND p.author_id = 'agentverse_news'
-            AND (p.status IS NULL OR p.status != 'taken_down')
+            WHERE (p.status IS NULL OR p.status != 'taken_down')
             AND pt.time_step >= ?
             ORDER BY pt.time_step DESC
         ''', (min_timestep,))

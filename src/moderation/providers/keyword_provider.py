@@ -27,7 +27,6 @@ class KeywordProvider:
     # 默认严重程度映射
     DEFAULT_SEVERITY_MAP = {
         "hate_speech": ModerationSeverity.HIGH,
-        "misinformation": ModerationSeverity.MEDIUM,
         "spam": ModerationSeverity.LOW,
         "violence": ModerationSeverity.HIGH,
         "sexual": ModerationSeverity.HIGH,
@@ -39,10 +38,6 @@ class KeywordProvider:
         "hate_speech": [
             "仇恨", "歧视", "种族主义", "纳粹", "恐怖分子",
             "should die", "kill yourself", "hate speech"
-        ],
-        "misinformation": [
-            "谣言", "假新闻", "虚假", "造谣", "不实信息",
-            "fake news", "conspiracy", "hoax"
         ],
         "spam": [
             "加微信", "扫码", "代购", "兼职", "赚钱",

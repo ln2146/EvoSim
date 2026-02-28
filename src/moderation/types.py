@@ -29,7 +29,6 @@ class ModerationSeverity(str, Enum):
 class ModerationCategory(str, Enum):
     """审核分类"""
     HATE_SPEECH = "hate_speech"       # 仇恨言论
-    MISINFORMATION = "misinformation"   # 虚假信息
     SPAM = "spam"                     # 垃圾信息
     VIOLENCE = "violence"             # 暴力内容
     SEXUAL = "sexual"                 # 色情内容

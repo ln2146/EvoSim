@@ -272,13 +272,13 @@ class ModerationService:
         logger.info(f"Batch moderation completed: {len(verdicts)} actions taken")
         return verdicts
 
-    def check_news_posts(
+    def check_posts(
         self,
         posts: List[Dict[str, Any]],
         min_engagement: int = None
     ) -> List[ModerationVerdict]:
         """
-        检查新闻帖子（根据配置）
+        检查帖子（根据配置）
 
         Args:
             posts: 帖子列表
@@ -303,24 +303,41 @@ class ModerationService:
         # 应用互动数阈值（显式 None 判断，确保 min_engagement=0 生效）
         threshold = min_engagement if min_engagement is not None else self.config.check_threshold_engagement
 
-        # 过滤出需要检查的帖子
+        # 过滤出需要检查的帖子（所有帖子，不限于新闻）
         posts_to_check = [
             post for post in posts
-            if post.get("is_news", False)
-            and (post.get("num_likes", 0) + post.get("num_shares", 0)) >= threshold
+            if (post.get("num_likes", 0) + post.get("num_shares", 0)) >= threshold
         ]
 
         mod_log.info(
-            f"[NEWS_CHECK] total_posts={len(posts)} | threshold={threshold} | "
+            f"[POST_CHECK] total_posts={len(posts)} | threshold={threshold} | "
             f"eligible={len(posts_to_check)} | skipped={len(posts) - len(posts_to_check)}"
         )
 
         if not posts_to_check:
-            logger.info(f"No news posts meet engagement threshold {threshold} (total posts: {len(posts)})")
+            logger.info(f"No posts meet engagement threshold {threshold} (total posts: {len(posts)})")
             return []
 
-        logger.info(f"🔍 Moderation checking {len(posts_to_check)} news posts (threshold={threshold})")
+        logger.info(f"🔍 Moderation checking {len(posts_to_check)} posts (threshold={threshold})")
         return self.check_batch(posts_to_check)
+
+    # 保持向后兼容的别名
+    def check_news_posts(
+        self,
+        posts: List[Dict[str, Any]],
+        min_engagement: int = None
+    ) -> List[ModerationVerdict]:
+        """
+        检查新闻帖子（向后兼容别名，实际调用 check_posts）
+
+        Args:
+            posts: 帖子列表
+            min_engagement: 最小互动数阈值
+
+        Returns:
+            裁决列表
+        """
+        return self.check_posts(posts, min_engagement)
 
     def _determine_action(self, verdict: ModerationVerdict) -> ModerationAction:
         """
