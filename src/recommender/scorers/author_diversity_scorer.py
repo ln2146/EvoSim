@@ -23,9 +23,9 @@ class AuthorDiversityScorer:
 
     这逼迫水军必须采用"分布式账号矩阵"（蚁群战术）而不是单点输出。
 
-    分类隔离:
-    惩罚仅在同一内容类型（real_news / fake_news / non_news）内部施加。
-    假新闻不会"占用"真实新闻的作者多样性配额，反之亦然。
+    新闻统一池:
+    所有新闻（real + fake）共享同一个作者多样性池，
+    防止假新闻因单独分池而规避惩罚。
 
     最低惩罚下限 (min_penalty):
     防止 0.7^n 指数衰减导致后位帖子分数趋近于零，保留最低竞争力。
@@ -47,13 +47,12 @@ class AuthorDiversityScorer:
         if not self.config.enabled:
             return candidates
 
-        # 按内容类型分组，独立施加惩罚
-        real_news = [c for c in candidates if c.is_news and c.news_type != 'fake']
-        fake_news = [c for c in candidates if c.is_news and c.news_type == 'fake']
-        non_news  = [c for c in candidates if not c.is_news]
+        # 所有新闻共享同一个多样性池（防止假新闻因单独分池而规避惩罚）
+        all_news = [c for c in candidates if c.is_news]
+        non_news = [c for c in candidates if not c.is_news]
 
         result = []
-        for pool in (real_news, fake_news, non_news):
+        for pool in (all_news, non_news):
             result.extend(self._apply_to_pool(pool))
 
         return result

@@ -14,10 +14,10 @@ class TopKSelector:
     """
     Top-K 选择器
 
-    分层采样策略，对齐现有 get_feed 逻辑:
-    - 新闻: top10 取 5 个 + 11-20 取 3 个
-    - 负面新闻: 加权随机 1 个
-    - 非新闻: top10 取 2 个
+    分层加权采样策略:
+    - 新闻: top10 加权采样 5 个 + 11-20 加权采样 3 个
+    - 非新闻: top10 加权采样 2 个
+    分数越高被选中概率越大，同时保留一定探索性
     """
 
     def __init__(self, config: SelectionConfig):
@@ -125,10 +125,8 @@ class TopKSelector:
                 pool.append(candidates[i])
                 i += 1
 
-        # 随机采样
-        if len(pool) <= pick_n:
-            return pool
-        return random.sample(pool, pick_n)
+        # 加权采样（分数越高越可能被选中）
+        return self._weighted_sample(pool, pick_n)
 
     def _weighted_sample(
         self,
