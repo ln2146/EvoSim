@@ -47,7 +47,7 @@ class AuthorCredibilityScorer:
             factor = self._compute_factor(influence, cfg)
             factor = max(cfg.min_penalty_factor, min(cfg.max_boost_factor, factor))
 
-            candidate.final_score = candidate.weighted_score * factor
+            candidate.final_score *= factor
 
         return candidates
 

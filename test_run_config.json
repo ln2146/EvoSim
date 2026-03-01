@@ -119,7 +119,6 @@
             "news_secondary_offset": 10,
             "news_secondary_top_k": 10,
             "news_secondary_pick_n": 3,
-            "negative_news_pick_n": 1,
             "non_news_top_k": 10,
             "non_news_pick_n": 2,
             "include_ties": true

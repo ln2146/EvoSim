@@ -131,9 +131,6 @@ class SelectionConfig:
     news_secondary_top_k: int = 10   # 次级池大小
     news_secondary_pick_n: int = 3   # 次级池采样数量
 
-    # 负面新闻采样
-    negative_news_pick_n: int = 1  # 负面新闻采样数量
-
     # 非新闻帖子采样
     non_news_top_k: int = 10       # 非新闻 Top-K 池
     non_news_pick_n: int = 2       # 非新闻采样数量

@@ -22,7 +22,7 @@
         "articles_per_injection": 10
     },
     "moderation": {
-        "content_moderation": false,
+        "content_moderation": true,
         "flag_threshold": 5,
         "note_threshold": 3
     },
@@ -45,7 +45,7 @@
         "standalone_mode": true
     },
     "malicious_bot_system": {
-        "enabled": false,
+        "enabled": true,
         "cluster_size": 15,
         "attack_probability": 1.0,
         "target_post_types": [
@@ -113,7 +113,6 @@
             "news_secondary_offset": 10,
             "news_secondary_top_k": 10,
             "news_secondary_pick_n": 3,
-            "negative_news_pick_n": 1,
             "non_news_top_k": 10,
             "non_news_pick_n": 2,
             "include_ties": true

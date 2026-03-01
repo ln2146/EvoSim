@@ -14,7 +14,6 @@ class FeedSource(str, Enum):
     """帖子来源类型 - 对应 X 算法的双轨召回"""
     IN_NETWORK = "in_network"        # 关注流 (Thunder)
     OUT_NETWORK = "out_network"      # 热点流 (Phoenix Retrieval)
-    NEGATIVE_NEWS = "negative_news"  # 负面/假新闻
     NON_NEWS = "non_news"            # 非新闻内容
 
 

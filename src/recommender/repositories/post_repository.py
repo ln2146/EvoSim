@@ -53,18 +53,6 @@ class PostRepository:
         result = fetch_all(query)
         return result if result else []
 
-    def get_negative_news_posts(self) -> List[Dict[str, Any]]:
-        """获取负面/假新闻帖子"""
-        query = f'''
-            {self.BASE_SELECT}
-            WHERE p.is_news = TRUE
-            AND p.news_type = 'fake'
-            AND (p.status IS NULL OR p.status != 'taken_down')
-        '''
-        # NO FALLBACK: Propagate database errors instead of returning empty list
-        result = fetch_all(query)
-        return result if result else []
-
     def get_posts_by_authors(self, author_ids: List[str]) -> List[Dict[str, Any]]:
         """
         获取指定作者的帖子 (In-Network 召回)

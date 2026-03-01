@@ -31,7 +31,7 @@ _pipeline_logger = None
 
 
 def _get_pipeline_logger():
-    """获取或创建推荐管道详细日志记录器"""
+    """获取或创建推荐管道详细日志记录器（只写入文件，不输出到终端）"""
     global _pipeline_logger
     if _pipeline_logger is None:
         log_dir = os.path.join(
@@ -44,6 +44,7 @@ def _get_pipeline_logger():
 
         _pipeline_logger = logging.getLogger('recommender.pipeline')
         _pipeline_logger.setLevel(logging.INFO)
+        _pipeline_logger.propagate = False  # 阻止日志传播到父 logger（不在终端显示）
 
         if not _pipeline_logger.handlers:
             file_handler = logging.FileHandler(log_file, encoding='utf-8')
@@ -171,11 +172,10 @@ class FeedPipeline:
         d2 = (datetime.now() - t0).total_seconds()
         in_count = ctx.metadata.get('in_network_count', 0)
         out_count = ctx.metadata.get('out_network_count', 0)
-        neg_count = ctx.metadata.get('negative_news_count', 0)
         plog.info(
             f"[Stage 2: Candidate Retrieval] "
             f"total={len(ctx.candidates)}, in_network={in_count}, "
-            f"out_network={out_count}, negative_news={neg_count}, duration={d2:.3f}s"
+            f"out_network={out_count}, duration={d2:.3f}s"
         )
         for c in ctx.candidates:
             plog.info(
@@ -294,13 +294,10 @@ class FeedPipeline:
             ctx.user_context,
             max_candidates=max_per_source
         )
-        negative_news = self.out_network_source.retrieve_negative_news(ctx.user_context)
-
-        ctx.candidates = in_network + out_network + negative_news
+        ctx.candidates = in_network + out_network
 
         ctx.add_metadata('in_network_count', len(in_network))
         ctx.add_metadata('out_network_count', len(out_network))
-        ctx.add_metadata('negative_news_count', len(negative_news))
 
         return ctx
 

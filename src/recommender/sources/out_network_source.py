@@ -66,26 +66,3 @@ class OutNetworkSource:
             candidates.append(candidate)
 
         return candidates[:max_candidates]
-
-    def retrieve_negative_news(self, user_context: UserContext) -> List[PostCandidate]:
-        """
-        召回负面/假新闻帖子
-
-        用于模拟水军攻击场景
-
-        Args:
-            user_context: 用户上下文
-
-        Returns:
-            标记为 NEGATIVE_NEWS 的候选帖子列表
-        """
-        rows = self.post_repo.get_negative_news_posts()
-
-        candidates = []
-        for row in rows:
-            candidate = PostCandidate.from_db_row(row)
-            candidate.source = FeedSource.NEGATIVE_NEWS
-            candidate.is_followed_author = str(row.get('author_id', '')) in user_context.followed_ids
-            candidates.append(candidate)
-
-        return candidates
