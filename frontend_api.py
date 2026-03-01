@@ -234,17 +234,16 @@ class ProcessManager:
         if auto_inputs:
             # 创建临时批处理文件（包含 exit 命令）
             bat_file = self._create_auto_input_script(script_path, auto_inputs, conda_env)
-            # 使用 Windows Terminal (wt) 启动，速度更快
-            # -w 0: 新窗口, -t: 标题, --: 后面是要执行的命令
-            cmd = f'wt -w 0 -t "{title}" -- cmd /k "{bat_file}"'
+            # 直接启动批处理文件
+            cmd = f'cmd /c start "{title}" cmd /c "{bat_file}"'
         else:
             # 直接启动，使用当前 Python 解释器
-            # 使用 Windows Terminal (wt) 启动，速度更快
-            cmd = f'wt -w 0 -t "{title}" -- cmd /k ""{self.python_exe}" {script_path} & pause"'
+            # pause 让用户按任意键后再 exit，避免终端自动关闭
+            cmd = f'cmd /c start "{title}" cmd /c ""{self.python_exe}" {script_path} & pause & exit"'
 
         process = subprocess.Popen(cmd, shell=True)
         return process
-    
+
     def _cleanup_temp_files(self):
         """清理记录的临时文件（内部方法）"""
         for temp_file in self.temp_files:
