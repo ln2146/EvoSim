@@ -5074,23 +5074,49 @@ class SimpleCoordinationSystem:
                     # Last fallback: get from alert_data
                     alert_data = alert.get("alert_data", {})
                     target_post_id = alert_data.get("post_id", "") or alert_data.get("content_id", "")
-                
+
                 # Clean possible prefix
                 if target_post_id and target_post_id.startswith("intervention_post_"):
                     target_post_id = target_post_id.replace("intervention_post_", "")
-            
-            # Leader Agent runs USC process, generates candidates, and posts two comments
+
+            # Build enhanced amplifier plan immediately after Strategist completes
+            if not isinstance(amplifier_plan, dict):
+                amplifier_plan = {"total_agents": 5, "role_distribution": {}}
+            if not amplifier_plan.get("role_distribution"):
+                amplifier_plan["role_distribution"] = {}
+
+            enhanced_amplifier_plan = amplifier_plan.copy()
+            enhanced_amplifier_plan["agent_instructions"] = amplifier_instructions
+            enhanced_amplifier_plan["coordination_strategy"] = coordination_strategy
+            enhanced_amplifier_plan["timing_plan"] = agent_instructions.get("timing_plan", {})
+
+            workflow_logger.info(f"  📋 Amplifier plan: total={amplifier_plan.get('total_agents', 5)}, role distribution={amplifier_plan.get('role_distribution', {})}")
+            if amplifier_instructions:
+                workflow_logger.info(f"  📋 Applying strategist amplifier instructions: {len(amplifier_instructions)} detailed instructions")
+                workflow_logger.info(f"  🎯 Coordination strategy: {enhanced_amplifier_plan['coordination_strategy']}")
+
+            # Trigger Amplifier right after Strategist using strategy core argument as input;
+            # run in parallel with Leader so both start simultaneously.
+            workflow_logger.info("⚖️ Activating Amplifier Agent cluster...")
+            amplifier_input_text = strategy.get("core_counter_argument", "") or content_text
+
             workflow_logger.info("🎯 Leader Agent starts USC process and generates candidate comments...")
-            content_result = await self.leader.generate_strategic_content(
-                strategy,  # Pass full strategy object instead of leader_instruction
-                content_text
+            _leader_result, _amplifier_result = await asyncio.gather(
+                self.leader.generate_strategic_content(strategy, content_text),
+                self._coordinate_amplifier_agents(amplifier_input_text, enhanced_amplifier_plan, target_post_id),
+                return_exceptions=True,
             )
+
+            # Handle Leader result
+            content_result = _leader_result if not isinstance(_leader_result, Exception) else None
+            if isinstance(_leader_result, Exception):
+                workflow_logger.warning(f"  ⚠️ Leader task raised exception: {_leader_result}")
 
             if not content_result or not content_result.get("success", False):
                 self.current_phase = "error"
                 error_msg = content_result.get('error', 'content generation failed') if content_result else 'content generation returned None'
                 return {"success": False, "error": f"Leader content generation failed: {error_msg}", "action_id": action_id}
-            
+
             leader_content = content_result["content"]
             leader_model = leader_content.get("selected_model", "unknown")
             selected_comments = leader_content.get("selected_comments", [])
@@ -5112,71 +5138,35 @@ class SimpleCoordinationSystem:
             workflow_logger.info(f"✅ Leader USC core content generated (model: {leader_model})")
             workflow_logger.info(f"💬 👑 Leader comment 1 on post {target_post_id}: {final_content_1}")
             workflow_logger.info(f"💬 👑 Leader comment 2 on post {target_post_id}: {final_content_2}")
-            
+
             # First leader posts a comment
             leader_comment_id = self._save_leader_comment_to_database(final_content_1, target_post_id, action_id)
             if leader_comment_id:
-                # Log to workflow
                 workflow_logger.info(f"💬 First leader comment ID: {leader_comment_id}")
                 workflow_logger.info(f"🎯 Target post: {target_post_id}")
             else:
-                # Log to workflow
                 workflow_logger.warning("⚠️ First leader comment save failed")
-                # Terminal output
                 logging.warning("⚠️ First leader comment save failed")
-            
+
             # Second leader posts a comment (use different action_id seed to generate different "user" ID)
             leader_comment_id_2 = self._save_leader_comment_to_database(final_content_2, target_post_id, f"{action_id}_leader2")
             if leader_comment_id_2:
-                # Log to workflow
                 workflow_logger.info(f"💬 Second leader comment ID: {leader_comment_id_2}")
                 workflow_logger.info(f"🎯 Target post: {target_post_id}")
             else:
-                # Log to workflow
                 workflow_logger.warning("⚠️ Second leader comment save failed")
-                # Terminal output
                 logging.warning("⚠️ Second leader comment save failed")
 
-            # 4. amplifier Agent responses
-            # Activate amplifier Agent cluster
-            # Log to workflow
-            workflow_logger.info("⚖️ Activating Amplifier Agent cluster...")
-
-            # Ensure amplifier_plan contains required fields
-            if not isinstance(amplifier_plan, dict):
-                amplifier_plan = {"total_agents": 5, "role_distribution": {}}
-
-            # If role_distribution is missing, use defaults
-            if not amplifier_plan.get("role_distribution"):
-                amplifier_plan["role_distribution"] = {}
-
-            workflow_logger.info(f"  📋 Amplifier plan: total={amplifier_plan.get('total_agents', 5)}, role distribution={amplifier_plan.get('role_distribution', {})}")
-
-            # Enhance amplifier_plan with concrete instructions
-            enhanced_amplifier_plan = amplifier_plan.copy()
-            enhanced_amplifier_plan["agent_instructions"] = amplifier_instructions
-            enhanced_amplifier_plan["coordination_strategy"] = coordination_strategy
-            enhanced_amplifier_plan["timing_plan"] = agent_instructions.get("timing_plan", {})
-
-            if amplifier_instructions:
-                workflow_logger.info(f"  📋 Applying strategist amplifier instructions: {len(amplifier_instructions)} detailed instructions")
-                workflow_logger.info(f"  🎯 Coordination strategy: {enhanced_amplifier_plan['coordination_strategy']}")
-
-            try:
-                # amplifier Agents generate responses based on the overall context of two leader comments
-                amplifier_input_text = final_content_1 if not final_content_2 else f"{final_content_1}\n\n{final_content_2}"
-                amplifier_responses = await self._coordinate_amplifier_agents(
-                    amplifier_input_text,
-                    enhanced_amplifier_plan,
-                    target_post_id  # Pass target post ID to amplifier Agent
-                )
-                if amplifier_responses is None:
-                    amplifier_responses = []
-                    workflow_logger.warning("  ⚠️ amplifier coordination returned None, using empty list")
-            except Exception as e:
-                workflow_logger.warning(f"  ⚠️ amplifier coordination failed: {e}")
+            # Handle Amplifier result (already completed in parallel with Leader above)
+            if isinstance(_amplifier_result, Exception):
+                workflow_logger.warning(f"  ⚠️ amplifier coordination failed: {_amplifier_result}")
                 amplifier_responses = []
-            
+            elif _amplifier_result is None:
+                amplifier_responses = []
+                workflow_logger.warning("  ⚠️ amplifier coordination returned None, using empty list")
+            else:
+                amplifier_responses = _amplifier_result
+
             workflow_logger.info(f"  ✅ {len(amplifier_responses)} amplifier responses generated")
 
             # Highlighted amplifier agent content display

@@ -3071,6 +3071,45 @@ def get_all_user_ids(db_name):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/defense/dashboard', methods=['GET'])
+def get_defense_dashboard():
+    """
+    Return live Niche Occupancy and Algorithmic Bias Gini metrics
+    by reading the simulation database on demand.
+
+    Query params:
+      db  - database file name (default: simulation.db)
+    """
+    try:
+        db_name = request.args.get('db', default='simulation.db', type=str)
+        db_path = os.path.join(DATABASE_DIR, db_name)
+
+        if not os.path.exists(db_path):
+            return jsonify({'error': 'Database not found', 'available': False}), 404
+
+        import sys as _sys
+        import os as _os
+        _agents_dir = _os.path.join(_os.path.dirname(__file__), 'src', 'agents')
+        if _agents_dir not in _sys.path:
+            _sys.path.insert(0, _agents_dir)
+        from defense_monitoring_center import create_monitoring_center
+
+        center = create_monitoring_center(top_n_topics=10)
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            center.sync_from_db(conn)
+            dashboard = center.generate_dashboard()
+        finally:
+            conn.close()
+
+        return jsonify({'success': True, 'dashboard': dashboard})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/opinion-balance/logs/stream', methods=['GET'])
 def stream_opinion_balance_logs():
     """

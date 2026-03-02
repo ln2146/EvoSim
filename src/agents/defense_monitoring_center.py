@@ -413,7 +413,7 @@ class DefenseMonitoringCenter:
                     niche_occupancy, algorithmic_bias
                 ),
                 "recommendations": self._generate_recommendations(
-                    niche_occupancy, algorithmic_bias
+                    niche_occupancy, algorithmic_bias, traffic_concentration
                 )
             }
         }
@@ -494,11 +494,12 @@ class DefenseMonitoringCenter:
     def _generate_recommendations(
         self,
         niche_occupancy: Dict[str, Any],
-        algorithmic_bias: Dict[str, Any]
+        algorithmic_bias: Dict[str, Any],
+        traffic_concentration: Dict[str, Any]
     ) -> List[str]:
         """Generate actionable recommendations"""
         recommendations = []
-        
+
         # Topic-based recommendations
         if niche_occupancy["malicious_side_percentage"] > 50:
             recommendations.append(
@@ -509,14 +510,15 @@ class DefenseMonitoringCenter:
             recommendations.append(
                 "Increase Fact Checker presence in contested discussions"
             )
-        
+
         # Bias-based recommendations
         if algorithmic_bias["overall_gini"] > 0.6:
             recommendations.append(
                 "Niche Fillers should introduce alternative topics to diversify engagement"
             )
-        
-        if algorithmic_bias.get("extreme_account_share", 0) > 25:
+
+        # extreme_account_share is 0-100 (percentage)
+        if traffic_concentration.get("extreme_account_share", 0) > 25:
             recommendations.append(
                 "Empaths should engage with extreme content audiences to reduce polarization"
             )

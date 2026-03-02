@@ -107,6 +107,36 @@ interface MetricsPoint {
   extremity: number
 }
 
+interface DefenseDashboard {
+  timestamp: string
+  niche_occupancy: {
+    total_topics: number
+    malicious_dominant: number
+    malicious_leaning: number
+    defense_dominant: number
+    defense_leaning: number
+    contested: number
+    malicious_side_percentage: number
+    defense_side_percentage: number
+  }
+  traffic_concentration: {
+    gini_coefficient: number
+    extreme_account_share: number
+    extreme_account_count: number
+    total_accounts: number
+  }
+  algorithmic_bias: {
+    overall_gini: number
+    bias_assessment: string
+  }
+  summary: {
+    defense_health: {
+      score: number
+      status: string
+    }
+  }
+}
+
 interface AgentLogItem {
   id: string
   ts: string
@@ -474,13 +504,23 @@ export default function DynamicDemo() {
     }
   }, [enableEvoCorps, opinionBalanceStartMs])
 
-  // 使用 postAnalysis Hook 的指标数据，如果没有追踪则使用默认数据
-  // 统一字段名：emotion/extremity 用于显示
-  // 默认值固定为 0.5
-  const defaultMetrics = { emotion: 0.5, extremity: 0.5 }
-  const currentMetrics = postAnalysis.isTracking
-    ? { emotion: postAnalysis.currentMetrics.sentiment, extremity: postAnalysis.currentMetrics.extremeness }
-    : defaultMetrics
+  // Defense dashboard state — polls every 10 s while simulation is running
+  const [defenseDashboard, setDefenseDashboard] = useState<DefenseDashboard | null>(null)
+  const [defenseFetching, setDefenseFetching] = useState(false)
+  useEffect(() => {
+    if (!isRunning) return
+    const fetchDashboard = () => {
+      setDefenseFetching(true)
+      fetch('/api/defense/dashboard')
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => { if (d?.success) setDefenseDashboard(d.dashboard) })
+        .catch(() => {})
+        .finally(() => setDefenseFetching(false))
+    }
+    fetchDashboard()
+    const id = setInterval(fetchDashboard, 10_000)
+    return () => clearInterval(id)
+  }, [isRunning])
 
   // 使用 postAnalysis Hook 的趋势数据，如果没有追踪或数据为空则使用空数组
   const metricsSeries = postAnalysis.isTracking && postAnalysis.metricsSeries.length > 0
@@ -935,7 +975,7 @@ export default function DynamicDemo() {
         </div>
 
         <div className="space-y-6">
-          <MetricsBarsCard emotion={currentMetrics.emotion} extremity={currentMetrics.extremity} />
+          <DefenseDashboardCard dashboard={defenseDashboard} isLive={isRunning} isFetching={defenseFetching} />
           <MetricsLineChartCard data={metricsSeries} />
         </div>
 
@@ -1400,40 +1440,92 @@ function CommentSortTabs({ value, onChange }: { value: 'likes' | 'time'; onChang
   )
 }
 
-function MetricsBarsCard({ emotion, extremity }: { emotion: number; extremity: number }) {
+function DefenseDashboardCard({ dashboard, isLive, isFetching }: { dashboard: DefenseDashboard | null; isLive: boolean; isFetching: boolean }) {
+  const no = dashboard?.niche_occupancy
+  const malDom  = no?.malicious_dominant  ?? 0
+  const malLean = no?.malicious_leaning   ?? 0
+  const defDom  = no?.defense_dominant    ?? 0
+  const defLean = no?.defense_leaning     ?? 0
+  const total   = no?.total_topics        ?? 0
+  // stacked bar widths — unaccounted remainder (neutral/contested) shown as gray
+  const malW  = total > 0 ? ((malDom + malLean) / total) * 100 : 0
+  const defW  = total > 0 ? ((defDom + defLean) / total) * 100 : 0
+  const neutralW = Math.max(0, 100 - malW - defW)
+
+  const tc = dashboard?.traffic_concentration
+  const extremeCount = tc?.extreme_account_count ?? 0
+  const extremeShare = tc?.extreme_account_share ?? 0
+  const totalAccounts = tc?.total_accounts ?? 0
+  const gini = dashboard?.algorithmic_bias.overall_gini ?? 0
+  const giniBarColor = gini < 0.3 ? 'bg-green-500' : gini < 0.6 ? 'bg-amber-500' : 'bg-red-500'
+  const concentrated = extremeCount > 0 && extremeShare > 50  // backend returns 0-100
+
   return (
     <div className="glass-card p-6 h-[300px] flex flex-col">
-      <div className="flex items-center gap-3 mb-0">
-        <Activity className="text-blue-500" />
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800">实时指标概览</h2>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <Shield className="text-blue-500" />
+          <h2 className="text-2xl font-bold text-slate-800">防御监控中心</h2>
         </div>
+        {isLive && (
+          <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 font-medium">
+            <span className={['w-2 h-2 rounded-full bg-emerald-500', isFetching ? 'animate-ping' : 'animate-pulse'].join(' ')} />
+            实时更新
+          </div>
+        )}
       </div>
-      <div className="space-y-6 flex-1 flex flex-col justify-center">
-        <MetricBar label="情绪度" value={emotion} />
-        <MetricBar label="内容极端度" value={extremity} />
-      </div>
-    </div>
-  )
-}
+      <div className="space-y-5 flex-1 flex flex-col justify-center">
 
-function MetricBar({ label, value }: { label: string; value: number }) {
-  const leftWidth = Math.max(10, Math.min(90, value * 100))
-  const rightWidth = 100 - leftWidth
+        {/* Niche Occupancy */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-slate-700">生态位占有率</span>
+            <span className="text-xs text-slate-400">共 {total} 个热门话题</span>
+          </div>
+          {/* count badges — two sides only */}
+          <div className="flex items-center justify-between mb-2">
+            <span className="flex items-center gap-1 text-xs font-semibold text-red-600">
+              <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+              水军主导 {malDom} 个
+              {malLean > 0 && <span className="font-normal text-red-400 ml-1">+倾向 {malLean} 个</span>}
+            </span>
+            <span className="flex items-center gap-1 text-xs font-semibold text-green-600">
+              EvoCorps 主导 {defDom} 个
+              {defLean > 0 && <span className="font-normal text-green-400 ml-1">+倾向 {defLean} 个</span>}
+              <span className="w-2 h-2 rounded-full bg-green-500 inline-block ml-1" />
+            </span>
+          </div>
+          <div className="h-3 w-full rounded-full overflow-hidden flex bg-slate-100">
+            <div className="bg-red-500 transition-all duration-500" style={{ width: `${malW}%` }} />
+            <div className="bg-slate-200 transition-all duration-500" style={{ width: `${neutralW}%` }} />
+            <div className="bg-green-500 transition-all duration-500" style={{ width: `${defW}%` }} />
+          </div>
+        </div>
 
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium text-slate-700">{label}</span>
-        <span className="text-sm font-semibold text-slate-800">{value.toFixed(2)}</span>
-      </div>
-      <div className="h-3 w-full rounded-full overflow-hidden bg-slate-100 flex">
-        <div className="bg-blue-500" style={{ width: `${leftWidth}%` }} />
-        <div className="bg-red-500" style={{ width: `${rightWidth}%` }} />
-      </div>
-      <div className="flex justify-between text-xs text-slate-500 mt-1">
-        <span>0.0</span>
-        <span>1.0</span>
+        {/* Algorithmic Bias Gini */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-slate-700">算法倾斜基尼系数</span>
+            <span className={['text-xs font-semibold', concentrated ? 'text-red-600' : 'text-green-600'].join(' ')}>
+              {concentrated ? '⚠ 流量过度集中' : '流量分布正常'}
+            </span>
+          </div>
+          {/* descriptive line */}
+          <div className="text-xs text-slate-600 mb-2">
+            {extremeCount > 0
+              ? <>{extremeCount} 个极端账号（占总账号 {totalAccounts > 0 ? ((extremeCount / totalAccounts) * 100).toFixed(1) : '0.0'}%）占据了 <span className={concentrated ? 'font-bold text-red-600' : 'font-semibold'}>{extremeShare.toFixed(1)}%</span> 的流量</>
+              : <span className="text-slate-400">暂无极端账号数据</span>
+            }
+          </div>
+          <div className="h-3 w-full rounded-full overflow-hidden bg-slate-100">
+            <div className={`${giniBarColor} h-full transition-all duration-500`} style={{ width: `${gini * 100}%` }} />
+          </div>
+          <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+            <span>基尼系数 {gini.toFixed(3)}</span>
+            <span>越高越集中 →</span>
+          </div>
+        </div>
+
       </div>
     </div>
   )

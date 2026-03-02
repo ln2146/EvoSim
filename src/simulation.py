@@ -468,6 +468,28 @@ class Simulation:
             else:
                 logging.debug(f"📊 Time step {step + 1} complete - post count: {current_post_count}/{max_posts}")
 
+            # --- Defense monitoring: emit metrics at end of each step ---
+            try:
+                self.monitoring_center.sync_from_db(self.conn)
+                dashboard = self.monitoring_center.generate_dashboard()
+                no = dashboard["niche_occupancy"]
+                ab = dashboard["algorithmic_bias"]
+                tc = dashboard["traffic_concentration"]
+                logging.info(
+                    f"📡 [防御监控·生态位] "
+                    f"水军主导 {no['malicious_dominant']} 个 +倾向 {no['malicious_leaning']} 个 ｜ "
+                    f"EvoCorps 主导 {no['defense_dominant']} 个 +倾向 {no['defense_leaning']} 个 "
+                    f"（共 {no['total_topics']} 个热门话题）"
+                )
+                logging.info(
+                    f"📡 [防御监控·基尼] "
+                    f"系数 {ab['overall_gini']:.3f}（{ab['bias_assessment']}）｜ "
+                    f"极端账号 {tc.get('extreme_account_count', 0)} 个"
+                    f"占 {tc.get('extreme_account_share', 0):.1f}% 流量"
+                )
+            except Exception as _monitor_err:
+                logging.debug(f"Defense monitoring skipped: {_monitor_err}")
+
             logging.info("")  # Add a newline for readability between time steps
 
         # Stop the opinion balance background monitoring task
