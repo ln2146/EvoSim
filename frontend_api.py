@@ -213,6 +213,10 @@ class ProcessManager:
                 f.write('#!/bin/bash\n')
                 # 切换到项目目录，确保相对路径（如 src/main.py）能正确解析
                 f.write(f'cd "{project_dir}"\n')
+                # 防止 PyTorch + HuggingFace tokenizers 在 macOS 上与
+                # asyncio/ThreadPoolExecutor 并发时触发 OpenMP segfault
+                f.write('export TOKENIZERS_PARALLELISM=false\n')
+                f.write('export OMP_NUM_THREADS=1\n')
                 f.write('{\n')
                 for inp in inputs:
                     # 用 printf 避免 echo 对特殊字符的差异处理
@@ -266,6 +270,8 @@ class ProcessManager:
             with open(sh_file, 'w', encoding='utf-8') as f:
                 f.write('#!/bin/bash\n')
                 f.write(f'cd "{project_dir}"\n')
+                f.write('export TOKENIZERS_PARALLELISM=false\n')
+                f.write('export OMP_NUM_THREADS=1\n')
                 f.write(f'"{self.python_exe}" "{script_path}"\n')
                 f.write('echo\nread -p "Press any key to exit..."\n')
             os.chmod(sh_file, 0o755)
