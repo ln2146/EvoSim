@@ -67,17 +67,30 @@ class KeywordProvider:
         r"反对\s*仇恨", r"谴责\s*仇恨", r"抵制\s*仇恨",
         r"反对\s*歧视", r"谴责\s*歧视", r"抵制\s*歧视",
         r"反对\s*暴力", r"谴责\s*暴力", r"抵制\s*暴力",
+        r"反对\s*恐怖", r"打击\s*恐怖",
 
         # 讨论/分析类
         r"讨论\s*仇恨", r"分析\s*歧视", r"研究\s*暴力",
+        r"探讨.*?暴力", r"分析.*?恐怖",
 
         # 引用/报道类
         r"报道.*?暴力", r"新闻.*?暴力", r"事件.*?暴力",
         r"暴力.*?事件", r"暴力.*?报道",
+        r"恐怖.*?袭击", r"袭击.*?事件",
+        r"爆炸.*?事件", r"枪击.*?案",
+
+        # 法律/执法类
+        r"打击.*?暴力", r"制裁.*?恐怖", r"逮捕.*?杀人",
+        r"判决.*?杀人", r"审判.*?暴力",
+
+        # 历史/教育类
+        r"历史.*?屠杀", r"纪念.*?屠杀", r"二战.*?纳粹",
+        r"教训.*?暴力", r"警示.*?恐怖",
 
         # 英文
         r"against\s+hate", r"condemn\s+hate", r"oppose\s+discrimination",
-        r"anti-violence", r"stop\s+violence",
+        r"anti-violence", r"stop\s+violence", r"fight\s+terrorism",
+        r"news.*?attack", r"report.*?violence",
     ]
 
     def __init__(self, config: ModerationProviderConfig):
