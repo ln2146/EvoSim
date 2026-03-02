@@ -131,7 +131,7 @@ class ModerationConfig:
 
     # 审核触发条件
     keyword_check_threshold: int = 0  # 关键词审核：发布时检查（互动数 = 0）
-    llm_check_threshold: int = 8      # LLM 审核：互动数 ≥ 8 时检查
+    llm_check_threshold: int = 10     # LLM 审核：互动数 ≥ 10 时检查
 
     # 异步批处理配置
     batch_size: int = 10
@@ -184,7 +184,7 @@ class ModerationConfig:
                 action_config_data
             ) if action_config_data else ModerationActionConfig(),
             keyword_check_threshold=config_dict.get('keyword_check_threshold', 0),
-            llm_check_threshold=config_dict.get('llm_check_threshold', 8),
+            llm_check_threshold=config_dict.get('llm_check_threshold', 10),
             batch_size=config_dict.get('batch_size', 10),
             batch_interval_seconds=config_dict.get('batch_interval_seconds', 60),
         )
