@@ -2,7 +2,7 @@
 LLM 审核提供者
 
 使用与仿真主体相同的 LLM 端点（Gemini via OpenAI-compatible proxy）
-进行语义级内容审核，能够识别阴谋论、隐晦假新闻等关键词无法覆盖的内容。
+进行语义级内容审核，能够识别仇恨言论、暴力内容等关键词无法覆盖的内容。
 
 通过 multi_model_selector 统一管理 LLM 客户端（与其他 Agent 共享 API 配置和限速）。
 """

@@ -53,7 +53,6 @@ class ModerationActionConfig:
     # 警告标签文字 - 分类 -> 标签文字
     warning_labels: Dict[str, str] = field(
         default_factory=lambda: {
-            "misinformation": "⚠️ 此内容可能包含不实信息，请谨慎参考",
             "hate_speech": "⚠️ 此内容包含敏感信息",
             "violence": "⚠️ 此内容涉及暴力内容",
             "spam": "⚠️ 此内容被标记为广告或垃圾信息",
@@ -110,7 +109,6 @@ class ModerationConfig:
             enabled=False,
             threshold=0.6,
             keywords={
-                "misinformation": ["谣言", "假新闻", "虚假"],
                 "hate_speech": ["仇恨", "歧视"],
             }
         )
