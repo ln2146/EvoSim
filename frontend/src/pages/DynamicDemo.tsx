@@ -1510,6 +1510,130 @@ function MetricsLineChartCard({ data }: { data: MetricsPoint[] }) {
   )
 }
 
+function getAmplifierTroopLabel(line: string): { icon: string; name: string; color: string } | null {
+  if (/启动集群|集群规模/.test(line))
+    return { icon: '🌱', name: '生态位填补者', color: 'text-emerald-600' }
+  if (/并行执行|生成回应|执行结果/.test(line))
+    return { icon: '💗', name: '同理心安抚者', color: 'text-pink-600' }
+  if (/点赞扩散/.test(line))
+    return { icon: '👑', name: '意见领袖护盘者', color: 'text-amber-600' }
+  return null
+}
+
+function AmplifierTroopGrid({ summary, status }: { summary: string[]; status: string }) {
+  const clusterCount = useMemo(() => {
+    for (const line of summary) {
+      const m = line.match(/集群规模[（(](\d+)[）)]/)
+      if (m) return parseInt(m[1], 10)
+    }
+    for (const line of summary) {
+      const m = line.match(/并行执行[（(](\d+)[）)]/)
+      if (m) return parseInt(m[1], 10)
+    }
+    for (const line of summary) {
+      const m = line.match(/生成回应[（(](\d+)[）)]/)
+      if (m) return parseInt(m[1], 10)
+    }
+    return null
+  }, [summary])
+
+  const isActive = status === 'running' || status === 'done'
+  const base = clusterCount ?? 12
+
+  const troops = [
+    {
+      key: 'empath',
+      icon: '💗',
+      name: '同理心安抚者',
+      subtitle: 'Empaths',
+      desc: '降低社区愤怒值，提供情绪价值',
+      count: Math.ceil(base * 0.25),
+      bg: 'bg-pink-50/80',
+      border: 'border-pink-200/60',
+      text: 'text-pink-700',
+      dot: 'bg-pink-400',
+      isNew: false,
+    },
+    {
+      key: 'factchecker',
+      icon: '🔍',
+      name: '逻辑辟谣者',
+      subtitle: 'Fact-checkers',
+      desc: '提供核心证据链，主要影响高认知用户',
+      count: Math.ceil(base * 0.25),
+      bg: 'bg-blue-50/80',
+      border: 'border-blue-200/60',
+      text: 'text-blue-700',
+      dot: 'bg-blue-400',
+      isNew: false,
+    },
+    {
+      key: 'amplifier',
+      icon: '👑',
+      name: '意见领袖护盘者',
+      subtitle: 'Amplifiers',
+      desc: '利用高信誉度（Follower 数量）强行阻断谣言传播链口',
+      count: Math.ceil(base * 0.25),
+      bg: 'bg-amber-50/80',
+      border: 'border-amber-200/60',
+      text: 'text-amber-700',
+      dot: 'bg-amber-400',
+      isNew: false,
+    },
+    {
+      key: 'nichefiller',
+      icon: '🌱',
+      name: '生态位填补者',
+      subtitle: 'Niche Fillers',
+      desc: '监测"封号真空期"，迅速抛出温和的替代性议题，收编流失的流量',
+      count: Math.ceil(base * 0.25),
+      bg: 'bg-emerald-50/80',
+      border: 'border-emerald-200/60',
+      text: 'text-emerald-700',
+      dot: 'bg-emerald-400',
+      isNew: true,
+    },
+  ]
+
+  return (
+    <div className="mt-3">
+      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">兵种分工</div>
+      <div className="grid grid-cols-2 gap-2">
+        {troops.map((t) => (
+          <div
+            key={t.key}
+            className={[
+              'relative rounded-xl p-2.5 border',
+              t.bg,
+              t.border,
+              t.isNew ? 'ring-1 ring-emerald-400/50' : '',
+            ].join(' ')}
+          >
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span className="text-sm leading-none">{t.icon}</span>
+              <div className="flex items-baseline gap-1 min-w-0">
+                <div className={['text-[11px] font-semibold', t.text].join(' ')}>{t.name}</div>
+                <div className="text-[9px] text-slate-400 shrink-0">{t.subtitle}</div>
+              </div>
+            </div>
+            {t.isNew && isActive ? (
+              <div className="mt-1.5 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[9px] text-emerald-600 font-medium">真空期监测中</span>
+              </div>
+            ) : isActive && clusterCount ? (
+              <div className="mt-1.5 flex items-center gap-1">
+                <span className={['w-1.5 h-1.5 rounded-full', t.dot].join(' ')} />
+                <span className={['text-[9px] font-medium', t.text].join(' ')}>{t.count} 名活跃</span>
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function InterventionFlowPanel({ state, enabled }: { state: FlowState; enabled: boolean }) {
   const roles: { role: Role; tone: string; label: string }[] = [
     { role: 'Analyst', tone: 'from-blue-500 to-cyan-500', label: '分析师' },
@@ -1739,6 +1863,10 @@ function RoleDetailSection({
         </div>
       ) : null}
 
+      {role === 'Amplifier' && (
+        <AmplifierTroopGrid summary={summary} status={status} />
+      )}
+
       {role === 'Analyst' ? (
         <div className={getAnalystCombinedCardClassName()}>
           {parsedPost ? (
@@ -1796,15 +1924,21 @@ function RoleDetailSection({
         <div className="mt-4 bg-white/60 border border-white/40 rounded-2xl p-4 min-h-0 flex-1">
           <div className="space-y-2 h-full overflow-y-auto overflow-x-hidden pr-1">
             {displayLines.length ? (
-              displayLines.map((line, idx) => (
-                <div key={`${role}_${idx}`} className="text-sm text-slate-700 leading-relaxed break-all">
-                  {line}
-                </div>
-              ))
+              displayLines.map((line, idx) => {
+                const troop = role === 'Amplifier' ? getAmplifierTroopLabel(line) : null
+                return (
+                  <div key={`${role}_${idx}`} className="flex items-start gap-1.5 text-sm leading-relaxed break-all">
+                    {troop ? (
+                      <span className={['text-[10px] font-semibold shrink-0 mt-0.5 whitespace-nowrap', troop.color].join(' ')}>
+                        {troop.icon}{troop.name}
+                      </span>
+                    ) : null}
+                    <span className="text-slate-700">{line}</span>
+                  </div>
+                )
+              })
             ) : (
-              <div className="space-y-1">
-                <div className="text-sm text-slate-600">{emptyCopy.stream}</div>
-              </div>
+              <div className="text-sm text-slate-600">{emptyCopy.stream}</div>
             )}
           </div>
         </div>

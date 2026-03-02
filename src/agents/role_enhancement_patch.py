@@ -43,10 +43,9 @@ def calculate_context_parameters(analysis_data: Dict[str, Any]) -> Dict[str, flo
     intensity_map = {"LOW": 0.2, "MODERATE": 0.4, "HIGH": 0.7, "VIRAL": 0.9}
     viral_potential = intensity_map.get(intensity_level, 0.4)
     
-    # Calculate discussion vacuum (inverse of comment count)
-    # This is a simplified calculation
-    discussion_vacuum = 0.3  # Default moderate vacuum
-    
+    # Read discussion_vacuum directly from analysis_data (set by NicheFiller trigger or analyst)
+    discussion_vacuum = float(analysis_data.get("discussion_vacuum", 0.3))
+
     return {
         "anger_level": anger_level,
         "misinformation_risk": misinformation_risk,
@@ -60,47 +59,45 @@ def enhanced_assign_roles_to_agents(
     role_distribution: Dict[str, int],
     analysis_data: Dict[str, Any] = None,
     use_smart_distribution: bool = True,
-    total_agents: int = 5
+    total_agents: int = 5,
+    base_ratios: Dict[str, float] = None
 ) -> List:
     """
     Enhanced role assignment that uses new defense roles
-    
+
     This replaces the original _assign_roles_to_agents method
-    
+
     Args:
         agents: List of amplifier agents
         role_distribution: Original role distribution from strategist
         analysis_data: Analysis data for smart distribution
         use_smart_distribution: Whether to use smart distribution
         total_agents: Total number of agents
-    
+        base_ratios: Evolved base ratios from EvolutionEngine (optional)
+
     Returns:
         List of agents with assigned roles
     """
     if use_smart_distribution and analysis_data:
         # Calculate context parameters
         context = calculate_context_parameters(analysis_data)
-        
-        # Get smart role distribution
+
+        # Get smart role distribution, using evolved base ratios when available
         new_distribution = get_recommended_role_distribution(
             anger_level=context["anger_level"],
             misinformation_risk=context["misinformation_risk"],
             viral_potential=context["viral_potential"],
             discussion_vacuum=context["discussion_vacuum"],
-            total_agents=total_agents
+            total_agents=total_agents,
+            evolved_base_ratios=base_ratios
         )
-        
+
         # Use new distribution instead of original
         role_distribution = new_distribution
     
     if not role_distribution:
-        # Default distribution if none provided
-        role_distribution = {
-            "empath": total_agents // 4 + 1,
-            "fact_checker": total_agents // 4,
-            "amplifier": total_agents // 4,
-            "niche_filler": total_agents - (total_agents // 4 * 3 + 1)
-        }
+        # Default distribution: use standard role distribution with neutral context
+        role_distribution = get_recommended_role_distribution(total_agents=total_agents)
     
     # Assign agents by role type
     agent_index = 0
@@ -200,9 +197,6 @@ def integrate_with_coordination_system(coordination_system):
         from src.agents.role_enhancement_patch import integrate_with_coordination_system
         integrate_with_coordination_system(coordination_system)
     """
-    # Store original method for fallback
-    original_assign_roles = coordination_system._assign_roles_to_agents
-    
     def enhanced_assign_roles(agents, role_distribution):
         # Get analysis data from latest workflow
         analysis_data = None
@@ -223,9 +217,6 @@ def integrate_with_coordination_system(coordination_system):
     
     # Replace method
     coordination_system._assign_roles_to_agents = enhanced_assign_roles
-    
-    # Also enhance fallback instruction generation
-    original_fallback = coordination_system._generate_fallback_instruction
     
     def enhanced_fallback(role_type, index, target_content):
         # Convert old role names if needed

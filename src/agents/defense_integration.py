@@ -156,8 +156,9 @@ class IntegratedDefenseSystem:
             # Higher extremism and lower sentiment = higher anger
             anger = (extremism_level / 4.0) * 0.6 + (1 - sentiment_score) * 0.4
             return min(1.0, max(0.0, anger))
-        except:
-            return 0.5
+        except Exception as e:
+            logger.warning(f"_calculate_anger_from_analysis failed: {e}")
+            raise
     
     def _calculate_misinformation_risk(self, analysis: Dict[str, Any]) -> float:
         """Calculate misinformation risk from analysis"""
@@ -171,8 +172,9 @@ class IntegratedDefenseSystem:
                 risk += 0.2
             
             return min(1.0, max(0.0, risk))
-        except:
-            return 0.3
+        except Exception as e:
+            logger.warning(f"_calculate_misinformation_risk failed: {e}")
+            raise
     
     def _generate_enhanced_instructions(
         self,

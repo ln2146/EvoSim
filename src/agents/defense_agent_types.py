@@ -255,6 +255,7 @@ class EvolutionParameters:
     success_threshold: float = 0.7         # Success threshold
     failure_threshold: float = 0.3         # Failure threshold
     decay_factor: float = 0.95             # Historical weight decay factor
+    max_likes_normalization: float = 100.0  # Normalizes raw like counts to [0,1] range
 
 
 def get_recommended_agent_type(

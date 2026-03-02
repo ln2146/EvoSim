@@ -25,20 +25,21 @@ except ImportError:
 try:
     from .defense_agent_types import (
         DefenseAgentType,
-        DefenseContext,
-        DefenseRoleConfig,
-        create_defense_role_configs,
-        get_defense_agent_description
+        DefenseAgentConfig,
+        AgentAllocationStrategy,
+        get_recommended_agent_type,
+        calculate_agent_effectiveness
     )
 except ImportError:
     pass
 
 try:
     from .defense_evolution_system import (
-        DefenseEvolutionSystem,
-        DefenseEvolutionConfig,
-        DefenseAction,
-        DefenseOutcome
+        EvolutionEngine,
+        EvolutionParameters,
+        FeedbackMetrics,
+        AgentPerformance,
+        DefenseCoordinator
     )
 except ImportError:
     pass
@@ -46,28 +47,29 @@ except ImportError:
 try:
     from .defense_monitoring_center import (
         DefenseMonitoringCenter,
-        MonitoringConfig,
-        ThreatLevel,
-        DefenseAlert
+        TopicData,
+        AccountMetrics,
+        NicheOccupancyTracker,
+        create_monitoring_center
     )
 except ImportError:
     pass
 
 try:
     from .defense_integration import (
-        DefenseIntegration,
-        integrate_defense_system,
-        create_defense_enhanced_coordination_system
+        IntegratedDefenseSystem,
+        create_integrated_defense_system
     )
 except ImportError:
     pass
 
 try:
     from .amplifier_role_enhancer import (
-        AmplifierRoleEnhancer,
-        EnhancedRoleConfig,
-        enhance_amplifier_roles,
-        get_role_instructions
+        AmplifierRole,
+        RoleAllocationStrategy,
+        get_recommended_role_distribution,
+        get_role_instructions,
+        convert_old_role_to_new
     )
 except ImportError:
     pass
@@ -119,33 +121,35 @@ __all__ = [
     
     # Defense system
     "DefenseAgentType",
-    "DefenseContext", 
-    "DefenseRoleConfig",
-    "create_defense_role_configs",
-    "get_defense_agent_description",
-    
+    "DefenseAgentConfig",
+    "AgentAllocationStrategy",
+    "get_recommended_agent_type",
+    "calculate_agent_effectiveness",
+
     # Evolution system
-    "DefenseEvolutionSystem",
-    "DefenseEvolutionConfig",
-    "DefenseAction",
-    "DefenseOutcome",
-    
+    "EvolutionEngine",
+    "EvolutionParameters",
+    "FeedbackMetrics",
+    "AgentPerformance",
+    "DefenseCoordinator",
+
     # Monitoring
     "DefenseMonitoringCenter",
-    "MonitoringConfig",
-    "ThreatLevel",
-    "DefenseAlert",
-    
+    "TopicData",
+    "AccountMetrics",
+    "NicheOccupancyTracker",
+    "create_monitoring_center",
+
     # Integration
-    "DefenseIntegration",
-    "integrate_defense_system",
-    "create_defense_enhanced_coordination_system",
-    
+    "IntegratedDefenseSystem",
+    "create_integrated_defense_system",
+
     # Role enhancement
-    "AmplifierRoleEnhancer",
-    "EnhancedRoleConfig",
-    "enhance_amplifier_roles",
+    "AmplifierRole",
+    "RoleAllocationStrategy",
+    "get_recommended_role_distribution",
     "get_role_instructions",
+    "convert_old_role_to_new",
     
     # Auto-integration
     "calculate_context_parameters",

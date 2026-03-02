@@ -157,6 +157,10 @@ class Simulation:
         else:
             self.opinion_balance_manager = None
 
+        # Initialize defense monitoring center (always active, syncs from DB on demand)
+        from agents.defense_monitoring_center import create_monitoring_center
+        self.monitoring_center = create_monitoring_center(top_n_topics=10)
+
         # Initialize malicious bot manager.
         #
         # Whether attacks actually run is now controlled *only* by
@@ -681,6 +685,55 @@ class Simulation:
                 f"🛡️ Time step {step + 1}: moderation complete - "
                 f"total_actions={len(verdicts)}, breakdown: {action_counts}"
             )
+
+            # Trigger NicheFiller vacuum response for every HARD_TAKEDOWN
+            hard_takedowns = [v for v in verdicts if v.action == "hard_takedown"]
+            if hard_takedowns and self.opinion_balance_manager and self.opinion_balance_manager.enabled:
+                coordination_system = getattr(self.opinion_balance_manager, "coordination_system", None)
+                if coordination_system:
+                    post_content_map = {p["post_id"]: p.get("content", "") for p in posts_to_check}
+                    for verdict in hard_takedowns:
+                        topic_summary = (post_content_map.get(verdict.post_id, "") or "")[:400]
+                        asyncio.create_task(
+                            coordination_system.execute_niche_filler_for_vacuum(
+                                post_id=verdict.post_id,
+                                user_id=verdict.user_id or "",
+                                topic_summary=topic_summary,
+                                minutes_since_ban=0.0,
+                            )
+                        )
+                        logging.info(f"🕳️ NicheFiller vacuum response queued: post={verdict.post_id}")
+
+        # Refresh monitoring dashboard after every moderation cycle
+        try:
+            self.monitoring_center.sync_from_db(self.conn)
+            dashboard = self.monitoring_center.generate_dashboard()
+            no = dashboard["niche_occupancy"]
+            ab = dashboard["algorithmic_bias"]
+            health = dashboard["summary"]["defense_health"]
+            logging.info(
+                f"📊 [监控] 生态位占有率 — "
+                f"防御侧: {no['defense_side_percentage']:.0f}% "
+                f"({no['defense_dominant']}主导+{no['defense_leaning']}倾向) | "
+                f"水军侧: {no['malicious_side_percentage']:.0f}% "
+                f"({no['malicious_dominant']}主导+{no['malicious_leaning']}倾向) | "
+                f"争夺中: {no['contested']}"
+            )
+            logging.info(
+                f"📊 [监控] 算法偏差 Gini — "
+                f"全局: {ab['overall_gini']:.3f} "
+                f"[{ab['bias_assessment']}] | "
+                f"水军: {ab['malicious_gini']:.3f} | "
+                f"防御: {ab['defense_gini']:.3f} | "
+                f"极端账号占流量: {dashboard['traffic_concentration'].get('extreme_account_share', 0):.1f}%"
+            )
+            logging.info(
+                f"📊 [监控] 防御健康度: {health['score']}/100 [{health['status'].upper()}]"
+            )
+            for alert in dashboard.get("alerts", []):
+                logging.warning(f"🚨 [监控告警] [{alert['level'].upper()}] {alert['message']}")
+        except Exception as _monitor_err:
+            logging.warning(f"⚠️ Monitoring dashboard refresh failed: {_monitor_err}")
 
     def _get_posts_for_moderation(self, step: int) -> list:
         """

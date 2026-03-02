@@ -135,23 +135,33 @@ def get_recommended_role_distribution(
     misinformation_risk: float = 0.3,
     viral_potential: float = 0.3,
     discussion_vacuum: float = 0.2,
-    total_agents: int = 5
+    total_agents: int = 5,
+    evolved_base_ratios: Optional[Dict[str, float]] = None
 ) -> Dict[str, int]:
     """
     Recommend role distribution based on context parameters
-    
+
     Args:
         anger_level: Anger level (0-1)
         misinformation_risk: Misinformation risk (0-1)
         viral_potential: Viral potential (0-1)
         discussion_vacuum: Discussion vacuum level (0-1)
         total_agents: Total number of agents
-    
+        evolved_base_ratios: Evolved allocation ratios from EvolutionEngine (optional)
+
     Returns:
         Role distribution dictionary {role_type: count}
     """
-    # Base allocation ratios
-    base_ratios = RoleAllocationStrategy()
+    # Base allocation ratios - use evolved ratios when available
+    if evolved_base_ratios:
+        base_ratios = RoleAllocationStrategy(
+            empath_ratio=evolved_base_ratios.get("empath", 0.25),
+            fact_checker_ratio=evolved_base_ratios.get("fact_checker", 0.25),
+            amplifier_ratio=evolved_base_ratios.get("amplifier", 0.25),
+            niche_filler_ratio=evolved_base_ratios.get("niche_filler", 0.25),
+        )
+    else:
+        base_ratios = RoleAllocationStrategy()
     
     # Adjust ratios based on context
     adjustments = {

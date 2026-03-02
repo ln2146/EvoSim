@@ -105,47 +105,63 @@ class NicheOccupancyTracker:
             return {
                 "total_topics": 0,
                 "malicious_dominant": 0,
+                "malicious_leaning": 0,
                 "defense_dominant": 0,
+                "defense_leaning": 0,
                 "contested": 0,
                 "malicious_percentage": 0.0,
                 "defense_percentage": 0.0,
                 "topics_detail": []
             }
-        
+
         malicious_dominant = 0
+        malicious_leaning = 0
         defense_dominant = 0
+        defense_leaning = 0
         contested = 0
         topics_detail = []
-        
+
         for topic_id in self.topic_rankings:
             controller = self.get_topic_controller(topic_id)
             topic = self.topics.get(topic_id)
             dominance = self.get_dominance_for_topic(topic_id)
-            
+
             if controller == "malicious":
                 malicious_dominant += 1
+            elif controller == "malicious_leaning":
+                malicious_leaning += 1
             elif controller == "defense":
                 defense_dominant += 1
-            else:
+            elif controller == "defense_leaning":
+                defense_leaning += 1
+            else:  # "contested"
                 contested += 1
-            
+
             topics_detail.append({
                 "topic_id": topic_id,
                 "topic_name": topic.topic_name if topic else "Unknown",
                 "controller": controller,
                 "malicious_ratio": dominance["malicious"],
                 "defense_ratio": dominance["defense"],
+                "neutral_ratio": dominance["neutral"],
                 "engagement_count": topic.engagement_count if topic else 0
             })
-        
+
         total = len(self.topic_rankings)
+        # "effectively malicious" = dominant + leaning
+        malicious_side = malicious_dominant + malicious_leaning
+        defense_side = defense_dominant + defense_leaning
         return {
             "total_topics": total,
             "malicious_dominant": malicious_dominant,
+            "malicious_leaning": malicious_leaning,
             "defense_dominant": defense_dominant,
+            "defense_leaning": defense_leaning,
             "contested": contested,
-            "malicious_percentage": malicious_dominant / total * 100 if total > 0 else 0,
-            "defense_percentage": defense_dominant / total * 100 if total > 0 else 0,
+            "malicious_percentage": malicious_dominant / total * 100 if total > 0 else 0.0,
+            "defense_percentage": defense_dominant / total * 100 if total > 0 else 0.0,
+            "malicious_side_percentage": malicious_side / total * 100 if total > 0 else 0.0,
+            "defense_side_percentage": defense_side / total * 100 if total > 0 else 0.0,
             "topics_detail": topics_detail,
             "timestamp": datetime.now().isoformat()
         }
@@ -412,12 +428,15 @@ class DefenseMonitoringCenter:
         algorithmic_bias: Dict[str, Any]
     ):
         """Check for alert conditions"""
-        # Alert: Malicious dominance in too many topics
-        if niche_occupancy["malicious_percentage"] > 60:
+        # Alert: Malicious dominance in too many topics (dominant + leaning)
+        if niche_occupancy["malicious_side_percentage"] > 60:
             self.alerts.append({
                 "level": "warning",
                 "type": "malicious_dominance",
-                "message": f"Malicious actors dominate {niche_occupancy['malicious_percentage']:.1f}% of top topics",
+                "message": (
+                    f"Malicious actors control {niche_occupancy['malicious_side_percentage']:.1f}% of top topics "
+                    f"({niche_occupancy['malicious_dominant']} dominant + {niche_occupancy['malicious_leaning']} leaning)"
+                ),
                 "timestamp": datetime.now().isoformat()
             })
         
@@ -446,9 +465,8 @@ class DefenseMonitoringCenter:
     ) -> Dict[str, Any]:
         """Calculate overall defense system health score"""
         
-        # Niche occupancy score (0-100)
-        # Higher is better (more defense dominance)
-        niche_score = niche_occupancy["defense_percentage"]
+        # Niche occupancy score (0-100): use defense_side (dominant + leaning)
+        niche_score = niche_occupancy["defense_side_percentage"]
         
         # Bias health score (0-100)
         # Lower Gini is better
@@ -482,12 +500,12 @@ class DefenseMonitoringCenter:
         recommendations = []
         
         # Topic-based recommendations
-        if niche_occupancy["malicious_percentage"] > 50:
+        if niche_occupancy["malicious_side_percentage"] > 50:
             recommendations.append(
                 "Deploy more Amplifier agents to contested topics"
             )
-        
-        if niche_occupancy["contested"] > niche_occupancy["defense_dominant"]:
+
+        if niche_occupancy["contested"] + niche_occupancy["defense_leaning"] > niche_occupancy["defense_dominant"]:
             recommendations.append(
                 "Increase Fact Checker presence in contested discussions"
             )
@@ -534,6 +552,107 @@ class DefenseMonitoringCenter:
         else:
             return history
     
+    def sync_from_db(self, conn) -> None:
+        """
+        Pull live data from the simulation SQLite connection and refresh all metrics.
+
+        Topic classification:
+          malicious  = agent_type = 'malicious_agent' OR (is_news AND news_type = 'fake')
+          defense    = is_agent_response = 1 OR agent_type = 'amplifier_agent'
+          neutral    = everything else (active posts only)
+
+        Account classification follows the same logic per author.
+        extreme_score = avg(opinion_monitoring.extremism_level) / 4.0 per user.
+        """
+        cursor = conn.cursor()
+
+        # --- Topics: group by root post ---
+        cursor.execute("""
+            SELECT
+                COALESCE(original_post_id, post_id)                          AS topic_id,
+                SUBSTR(MIN(content), 1, 60)                                  AS topic_name,
+                SUM(num_likes + num_comments + num_shares)                   AS engagement_count,
+                SUM(CASE WHEN agent_type = 'malicious_agent'
+                          OR (is_news = 1 AND news_type = 'fake')
+                     THEN 1 ELSE 0 END)                                      AS malicious_posts,
+                SUM(CASE WHEN is_agent_response = 1
+                          OR agent_type = 'amplifier_agent'
+                     THEN 1 ELSE 0 END)                                      AS defense_posts,
+                SUM(CASE WHEN NOT (agent_type = 'malicious_agent'
+                                   OR (is_news = 1 AND news_type = 'fake'))
+                          AND NOT (is_agent_response = 1
+                                   OR agent_type = 'amplifier_agent')
+                     THEN 1 ELSE 0 END)                                      AS neutral_posts,
+                SUM(num_likes)                                               AS total_likes,
+                SUM(num_comments)                                            AS total_comments
+            FROM posts
+            WHERE status IS NULL OR status = 'active'
+            GROUP BY COALESCE(original_post_id, post_id)
+            ORDER BY engagement_count DESC
+            LIMIT ?
+        """, (self.niche_tracker.top_n_topics,))
+
+        self.niche_tracker.topics.clear()
+        for row in cursor.fetchall():
+            td = TopicData(
+                topic_id=row[0] or "",
+                topic_name=row[1] or "",
+                engagement_count=row[2] or 0,
+                malicious_posts=row[3] or 0,
+                defense_posts=row[4] or 0,
+                neutral_posts=row[5] or 0,
+                total_likes=row[6] or 0,
+                total_comments=row[7] or 0,
+            )
+            self.niche_tracker.topics[td.topic_id] = td
+        self.niche_tracker._recalculate_rankings()
+
+        # --- Accounts: per user ---
+        cursor.execute("""
+            SELECT
+                u.user_id,
+                u.total_likes_received,
+                u.total_comments_received,
+                u.follower_count,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM posts p
+                        WHERE p.author_id = u.user_id
+                          AND (p.agent_type = 'malicious_agent'
+                               OR (p.is_news = 1 AND p.news_type = 'fake'))
+                        LIMIT 1
+                    ) THEN 'malicious'
+                    WHEN EXISTS (
+                        SELECT 1 FROM posts p
+                        WHERE p.author_id = u.user_id
+                          AND (p.is_agent_response = 1 OR p.agent_type = 'amplifier_agent')
+                        LIMIT 1
+                    ) THEN 'defense'
+                    ELSE 'neutral'
+                END AS account_type,
+                COALESCE((
+                    SELECT AVG(CAST(om.extremism_level AS FLOAT)) / 4.0
+                    FROM opinion_monitoring om
+                    JOIN posts p2 ON CAST(om.post_id AS TEXT) = p2.post_id
+                    WHERE p2.author_id = u.user_id
+                ), 0.0) AS extreme_score
+            FROM users u
+        """)
+
+        self.bias_calculator.accounts.clear()
+        for row in cursor.fetchall():
+            am = AccountMetrics(
+                account_id=row[0] or "",
+                account_type=row[4] or "neutral",
+                followers=row[3] or 0,
+                total_likes=row[1] or 0,
+                total_comments=row[2] or 0,
+                total_posts=0,
+                engagement_rate=0.0,
+                extreme_score=min(1.0, max(0.0, row[5] or 0.0)),
+            )
+            self.bias_calculator.accounts[am.account_id] = am
+
     def export_dashboard(self, format: str = "json") -> str:
         """Export dashboard data"""
         dashboard = self.generate_dashboard()
@@ -556,8 +675,8 @@ class DefenseMonitoringCenter:
         no = dashboard["niche_occupancy"]
         print("\n--- Niche Occupancy (Top Topics) ---")
         print(f"  Total Topics Monitored: {no['total_topics']}")
-        print(f"  Defense Dominant: {no['defense_dominant']} ({no['defense_percentage']:.1f}%)")
-        print(f"  Malicious Dominant: {no['malicious_dominant']} ({no['malicious_percentage']:.1f}%)")
+        print(f"  Defense  — Dominant: {no['defense_dominant']}  Leaning: {no['defense_leaning']}  ({no['defense_side_percentage']:.1f}% total)")
+        print(f"  Malicious— Dominant: {no['malicious_dominant']}  Leaning: {no['malicious_leaning']}  ({no['malicious_side_percentage']:.1f}% total)")
         print(f"  Contested: {no['contested']}")
         
         # Traffic Concentration

@@ -78,7 +78,7 @@ class EvolutionEngine:
         
         # Determine if successful
         success_score = (
-            metrics.likes_received * 0.01 * self.params.like_weight +
+            min(metrics.likes_received / self.params.max_likes_normalization, 1.0) * self.params.like_weight +
             (metrics.sentiment_improvement + 1) / 2 * self.params.sentiment_weight +
             metrics.engagement_rate * self.params.engagement_weight
         )

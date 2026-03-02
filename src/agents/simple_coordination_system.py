@@ -3756,6 +3756,16 @@ class SimpleCoordinationSystem:
 
         self.action_history = []
         self.current_phase = "idle"
+        self._last_analysis_data = {}  # Cache last analyst output for smart role distribution
+        self._evolved_allocation = None  # Updated by EvolutionEngine after every 3 cycles
+        self._evolution_cycle_count = 0
+        try:
+            from .defense_evolution_system import DefenseCoordinator
+            self._defense_coordinator = DefenseCoordinator()
+            workflow_logger.info("✅ DefenseCoordinator initialized for evolution feedback loop")
+        except Exception as _e:
+            self._defense_coordinator = None
+            workflow_logger.warning(f"⚠️ DefenseCoordinator unavailable: {_e}")
 
         # Phase three: feedback and iteration
         self.monitoring_active = False
@@ -4280,8 +4290,10 @@ class SimpleCoordinationSystem:
         # Try to use enhanced role assignment with defense roles
         if _ROLE_ENHANCEMENT_AVAILABLE and role_distribution:
             try:
-                context_params = calculate_context_parameters(role_distribution)
-                return enhanced_assign_roles_to_agents(agents, role_distribution, context_params)
+                analysis_for_context = getattr(self, '_last_analysis_data', {})
+                context_params = calculate_context_parameters(analysis_for_context)
+                evolved = getattr(self, '_evolved_allocation', None)
+                return enhanced_assign_roles_to_agents(agents, role_distribution, context_params, total_agents=len(agents), base_ratios=evolved)
             except Exception as e:
                 workflow_logger.warning(f"  ⚠️ Enhanced role assignment failed, using fallback: {e}")
         
@@ -4323,6 +4335,175 @@ class SimpleCoordinationSystem:
             agent_index += 1
 
         return agents
+
+    def _record_defense_feedback(self, amplifier_responses: List[Dict[str, Any]], likes_count: int = 0):
+        """Record defense agent performance feedback and trigger evolution every 3 cycles."""
+        if not self._defense_coordinator or not self.amplifier_agents:
+            return
+        try:
+            from .defense_evolution_system import FeedbackMetrics
+            from .defense_agent_types import DefenseAgentType
+            role_map = {
+                "empath": DefenseAgentType.EMPATH,
+                "fact_checker": DefenseAgentType.FACT_CHECKER,
+                "amplifier": DefenseAgentType.AMPLIFIER,
+                "niche_filler": DefenseAgentType.NICHE_FILLER,
+            }
+            role_counts: Dict[str, int] = {}
+            for agent in self.amplifier_agents:
+                role = getattr(agent, 'assigned_role', 'general')
+                role_counts[role] = role_counts.get(role, 0) + 1
+
+            total_agents = max(sum(role_counts.values()), 1)
+            success_rate = len([r for r in amplifier_responses if r.get("success")]) / max(len(amplifier_responses), 1)
+            per_agent_likes = likes_count / total_agents
+            sentiment_improvement = (success_rate - 0.5) * 0.4  # proxy: success rate → sentiment
+
+            for role_str, count in role_counts.items():
+                defense_type = role_map.get(role_str)
+                if not defense_type:
+                    continue
+                metrics = FeedbackMetrics(
+                    likes_received=int(per_agent_likes * count),
+                    sentiment_improvement=sentiment_improvement,
+                    engagement_rate=success_rate
+                )
+                self._defense_coordinator.evolution_engine.record_feedback(defense_type, metrics)
+
+            self._evolution_cycle_count += 1
+            if self._evolution_cycle_count % 3 == 0:
+                result = self._defense_coordinator.trigger_evolution()
+                alloc = result.get("current_allocation", {})
+                self._evolved_allocation = alloc
+                workflow_logger.info(
+                    f"🧬 Evolution #{self._evolution_cycle_count // 3} → "
+                    f"empath={alloc.get('empath', 0):.1%} "
+                    f"fact_checker={alloc.get('fact_checker', 0):.1%} "
+                    f"amplifier={alloc.get('amplifier', 0):.1%} "
+                    f"niche_filler={alloc.get('niche_filler', 0):.1%}"
+                )
+            else:
+                cycles_left = 3 - self._evolution_cycle_count % 3
+                workflow_logger.info(f"📊 Defense feedback recorded (cycle {self._evolution_cycle_count}, evolution in {cycles_left} more)")
+        except Exception as e:
+            workflow_logger.warning(f"⚠️ Defense feedback recording failed: {e}")
+
+    async def execute_niche_filler_for_vacuum(
+        self,
+        post_id: str,
+        user_id: str,
+        topic_summary: str,
+        minutes_since_ban: float = 0.0
+    ):
+        """
+        Rapidly deploy NicheFiller agents to fill the discussion vacuum after a ban/takedown.
+        Uses a lightweight path (bypasses Analyst + Strategist + Leader) for fast response.
+
+        Time windows based on NicheFiller golden-window logic:
+          0-30 min  → golden (vacuum=0.9)
+          30-120 min → silver (vacuum=0.6)
+          120-360 min → bronze (vacuum=0.35)
+          >360 min   → skip (too late)
+        """
+        if minutes_since_ban <= 30:
+            vacuum_level = 0.9
+            window = "golden"
+        elif minutes_since_ban <= 120:
+            vacuum_level = 0.6
+            window = "silver"
+        elif minutes_since_ban <= 360:
+            vacuum_level = 0.35
+            window = "bronze"
+        else:
+            workflow_logger.info(f"⏰ NicheFiller: vacuum expired ({minutes_since_ban:.0f}min since ban), skipping")
+            return
+
+        workflow_logger.info(
+            f"🕳️ NicheFiller vacuum activated: post={post_id} user={user_id} "
+            f"vacuum={vacuum_level:.0%} ({window} window)"
+        )
+
+        # Override analysis context to signal high vacuum to _assign_roles_to_agents
+        self._last_analysis_data = {
+            **getattr(self, '_last_analysis_data', {}),
+            "discussion_vacuum": vacuum_level,
+            "account_ban_event": True,
+            "sentiment_score": 0.5,
+            "extremism_level": 0,
+            "engagement_metrics": {"intensity_level": "LOW"},
+        }
+
+        # Temporarily override evolved allocation: NicheFillers dominate proportionally to vacuum_level
+        # Non-niche roles share the remainder in proportion to AgentAllocationStrategy defaults
+        original_allocation = getattr(self, '_evolved_allocation', None)
+        from .defense_agent_types import AgentAllocationStrategy as _AAS
+        _base = _AAS()
+        _non_niche_sum = _base.empath_ratio + _base.fact_checker_ratio + _base.amplifier_ratio
+        _niche_ratio = vacuum_level  # vacuum_level [0,1] directly drives niche dominance
+        _scale = (1.0 - _niche_ratio) / _non_niche_sum
+        self._evolved_allocation = {
+            "niche_filler": round(_niche_ratio, 3),
+            "empath": round(_base.empath_ratio * _scale, 3),
+            "fact_checker": round(_base.fact_checker_ratio * _scale, 3),
+            "amplifier": round(_base.amplifier_ratio * _scale, 3),
+        }
+
+        # Pre-built amplifier plan — no LLM calls needed for Analyst/Strategist/Leader
+        total_agents = 4
+        niche_instruction = {
+            "role_type": "niche_filler",
+            "response_style": "gentle topic redirection",
+            "key_message": "Introduce a constructive alternative topic to fill the discussion vacuum",
+            "tone": "engaging and redirective",
+            "focus_points": [
+                "Fill the discussion vacuum with a fresh constructive topic",
+                "Gently redirect community attention away from the removed content",
+                "Keep tone mild, welcoming, and non-confrontational",
+            ],
+            "typical_phrases": [
+                "On this topic, there's another angle worth exploring...",
+                "While we reflect on this, let's also consider...",
+                "Here's a related discussion that might interest the community...",
+            ],
+            "response_length": "60-120 words",
+        }
+        amplifier_plan = {
+            "total_agents": total_agents,
+            "role_distribution": {
+                "niche_filler": 2,
+                "empath": 1,
+                "amplifier": 1,
+                "fact_checker": 0,
+            },
+            "agent_instructions": [niche_instruction],
+            "coordination_strategy": "rapid vacuum filling",
+            "timing_plan": {},
+        }
+
+        vacuum_content = (
+            f"{topic_summary or 'Community discussion'}\n\n"
+            f"[Vacuum context: A major post was removed. "
+            f"Time since removal: {minutes_since_ban:.0f}min. "
+            f"Goal: fill discussion space with constructive alternative topics. "
+            f"Vacuum intensity: {vacuum_level:.0%}.]"
+        )
+
+        try:
+            amplifier_responses = await self._coordinate_amplifier_agents(
+                target_content=vacuum_content,
+                amplifier_plan=amplifier_plan,
+                target_post_id=post_id,
+            )
+            filled = len([r for r in amplifier_responses if r.get("success")])
+            workflow_logger.info(
+                f"✅ NicheFiller vacuum filled: {filled}/{total_agents} agents responded "
+                f"(post={post_id}, {window} window)"
+            )
+        except Exception as e:
+            workflow_logger.warning(f"⚠️ NicheFiller vacuum response failed: {e}")
+        finally:
+            # Restore original allocation so it doesn't pollute normal workflows
+            self._evolved_allocation = original_allocation
 
     def _assign_few_shot_examples(self, agent, role_type: str):
         """Assign few-shot examples to agent."""
@@ -4781,6 +4962,9 @@ class SimpleCoordinationSystem:
                     f"sentiment: {final_sentiment_score:.2f}/1.0"
                 )
 
+            # Cache analysis data for smart role distribution in _assign_roles_to_agents
+            self._last_analysis_data = analysis_data
+
             # If forced intervention, skip checks and execute directly
             if force_intervention:
                 workflow_logger.info("   🔧 Force intervention mode: skip checks and execute intervention")
@@ -5008,13 +5192,14 @@ class SimpleCoordinationSystem:
                     workflow_logger.info(f"💬 🤖 amplifier-{i+1} ({persona_id}) ({selected_model}) commented: {response_content}")
 
             # amplifier Agents like leader comments
+            likes_count = 0
             if leader_comment_id and amplifier_responses:
                 workflow_logger.info("💖 amplifier Agents start liking leader comments...")
                 likes_count = await self._amplifier_agents_like_leader_comment(leader_comment_id, amplifier_responses, leader_comment_id_2)
                 if likes_count > 0:
                     workflow_logger.info(f"  ✅ {likes_count} amplifier Agents successfully liked leader comments")
                     workflow_logger.info(f"💖 {likes_count} amplifier Agents liked leader comments")
-                    
+
                     # Based on amplifier agent count, add (amplifier_agent_count * 20) likes to each leader comment
                     amplifier_agent_count = len([r for r in amplifier_responses if r.get("success")])
                     workflow_logger.info(f"  📊 Prepare bulk likes: amplifier_agent_count={amplifier_agent_count}, will add {amplifier_agent_count * 20} likes")
@@ -5027,6 +5212,8 @@ class SimpleCoordinationSystem:
                 else:
                     workflow_logger.info("  ⚠️  amplifier Agent likes failed or no valid responses")
 
+            # Record defense feedback for evolution engine
+            self._record_defense_feedback(amplifier_responses, likes_count)
 
             # ===== Calculate base effectiveness score =====
             workflow_logger.info("📊 Calculating base effectiveness score...")
@@ -6233,13 +6420,14 @@ class SimpleCoordinationSystem:
                     workflow_logger.info(f"💬 🤖 amplifier-{i+1} ({persona_id}) ({selected_model}) commented: {response_content}")
             
             # amplifier Agents like leader comments
+            likes_count = 0
             if leader_comment_id and amplifier_responses:
                 workflow_logger.info("💖 amplifier Agents start liking leader comments...")
                 likes_count = await self._amplifier_agents_like_leader_comment(leader_comment_id, amplifier_responses, leader_comment_id_2)
                 if likes_count > 0:
                     workflow_logger.info(f"  ✅ {likes_count} amplifier Agents successfully liked leader comments")
                     workflow_logger.info(f"💖 {likes_count} amplifier Agents liked leader comments")
-                    
+
                     # Based on amplifier agent count, add (amplifier_agent_count * 20) likes to each leader comment
                     amplifier_agent_count = len([r for r in amplifier_responses if r.get("success")])
                     workflow_logger.info(f"  📊 Prepare bulk likes: amplifier_agent_count={amplifier_agent_count}, will add {amplifier_agent_count * 20} likes")
@@ -6251,7 +6439,10 @@ class SimpleCoordinationSystem:
                         workflow_logger.warning("  ⚠️  amplifier_agent_count is 0, skipping bulk likes")
                 else:
                     workflow_logger.info("  ⚠️  amplifier Agent likes failed or no valid responses")
-            
+
+            # Record defense feedback for evolution engine
+            self._record_defense_feedback(amplifier_responses, likes_count)
+
             # Update task baseline data for later monitoring iterations
             combined_leader_content = {
                 "final_content": amplifier_input_text
