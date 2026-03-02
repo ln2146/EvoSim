@@ -280,19 +280,27 @@ class ProcessManager:
 
         else:
             # --- Linux：依次尝试常见终端模拟器 ---
+            # 各终端 -e 用法不同：
+            #   gnome-terminal/xfce4-terminal/mate-terminal: -- program args
+            #   xterm/konsole/x-terminal-emulator: -e program args（多个独立参数）
             import shutil
             candidates = [
-                ['x-terminal-emulator', '-e', f'bash "{abs_sh}"'],
-                ['gnome-terminal', '--', 'bash', abs_sh],
-                ['xfce4-terminal', '-e', f'bash "{abs_sh}"'],
-                ['konsole', '-e', f'bash "{abs_sh}"'],
-                ['xterm', '-e', f'bash "{abs_sh}"'],
+                ['gnome-terminal',    '--',  'bash', abs_sh],
+                ['xfce4-terminal',    '--',  'bash', abs_sh],
+                ['mate-terminal',     '--',  'bash', abs_sh],
+                ['konsole',           '-e',  'bash', abs_sh],
+                ['xterm',             '-e',  'bash', abs_sh],
+                ['x-terminal-emulator', '-e', 'bash', abs_sh],
+                ['lxterminal',        '-e',  f'bash "{abs_sh}"'],
+                ['alacritty',         '-e',  'bash', abs_sh],
+                ['kitty',             'bash', abs_sh],
             ]
             for args in candidates:
                 if shutil.which(args[0]):
                     return subprocess.Popen(args)
-            # 降级：无可用终端时在后台静默运行
-            return subprocess.Popen([self.python_exe, script_path])
+            # 降级：无可用图形终端时直接用 bash 后台运行脚本
+            # .sh 脚本内部已处理好输入管道，stdin 给 /dev/null 让 read -p 直接跳过
+            return subprocess.Popen(['bash', abs_sh], stdin=subprocess.DEVNULL)
 
     def _cleanup_temp_files(self):
         """清理记录的临时文件（内部方法）"""
