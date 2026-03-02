@@ -171,47 +171,57 @@ class ProcessManager:
         return False
     
     def _create_auto_input_script(
-        self, 
-        script_path: str, 
+        self,
+        script_path: str,
         inputs: List[str],
         conda_env: Optional[str] = None
     ) -> str:
-        """创建自动输入的批处理脚本（内部方法）
-        
+        """创建自动输入的脚本（内部方法）
+
+        Windows 生成 .bat 批处理文件，macOS/Linux 生成 .sh Shell 脚本。
+
         Args:
             script_path: 要运行的 Python 脚本路径
             inputs: 输入序列列表
             conda_env: conda 环境名称（已废弃，保留兼容性）
-            
+
         Returns:
-            str: 批处理文件路径
+            str: 脚本文件路径
         """
-        # 生成唯一的临时批处理文件名
         timestamp = int(time.time())
-        bat_file = f"temp_input_{timestamp}.bat"
-        
-        with open(bat_file, 'w', encoding='utf-8') as f:
-            # 不需要激活 conda 环境，直接使用当前 Python 解释器
-            # 使用 sys.executable 确保使用当前 Python 解释器
-            
-            # 写入自动输入命令
-            f.write('@echo off\n')
-            f.write('(\n')
-            for inp in inputs:
-                if inp == '':  # 空字符串表示回车
-                    f.write('echo.\n')
-                else:
-                    f.write(f'echo {inp}\n')
-            f.write(f') | "{self.python_exe}" {script_path}\n')
-            # pause 让用户确认后再 exit，避免终端自动关闭
-            f.write('pause\n')
-            # 注意：移除 exit 命令，让终端在模拟结束后保持打开状态
-            # 用户可以手动关闭终端窗口
-            # f.write('exit\n')
-        
-        # 记录临时文件路径用于后续清理
-        self.temp_files.append(bat_file)
-        return bat_file
+
+        if sys.platform == 'win32':
+            # --- Windows：生成 .bat 批处理文件 ---
+            bat_file = f"temp_input_{timestamp}.bat"
+            with open(bat_file, 'w', encoding='utf-8') as f:
+                f.write('@echo off\n')
+                f.write('(\n')
+                for inp in inputs:
+                    if inp == '':  # 空字符串表示回车
+                        f.write('echo.\n')
+                    else:
+                        f.write(f'echo {inp}\n')
+                f.write(f') | "{self.python_exe}" {script_path}\n')
+                f.write('pause\n')
+            self.temp_files.append(bat_file)
+            return bat_file
+        else:
+            # --- macOS / Linux：生成 .sh Shell 脚本 ---
+            sh_file = f"temp_input_{timestamp}.sh"
+            project_dir = os.getcwd()
+            with open(sh_file, 'w', encoding='utf-8') as f:
+                f.write('#!/bin/bash\n')
+                # 切换到项目目录，确保相对路径（如 src/main.py）能正确解析
+                f.write(f'cd "{project_dir}"\n')
+                f.write('{\n')
+                for inp in inputs:
+                    # 用 printf 避免 echo 对特殊字符的差异处理
+                    f.write(f'  printf "%s\\n" "{inp}"\n')
+                f.write(f'}} | "{self.python_exe}" "{script_path}"\n')
+                f.write('echo\nread -p "Press any key to exit..."\n')
+            os.chmod(sh_file, 0o755)
+            self.temp_files.append(sh_file)
+            return sh_file
     
     def _start_process_in_terminal(
         self,
@@ -222,6 +232,11 @@ class ProcessManager:
     ) -> subprocess.Popen:
         """在新终端启动进程（内部方法）
 
+        自动检测操作系统，分别使用对应的终端启动方式：
+        - Windows: cmd /c start
+        - macOS:   osascript (Terminal.app)
+        - Linux:   x-terminal-emulator / gnome-terminal / xterm 等
+
         Args:
             script_path: 要运行的 Python 脚本路径
             title: 终端窗口标题
@@ -231,18 +246,53 @@ class ProcessManager:
         Returns:
             subprocess.Popen: 进程对象
         """
-        if auto_inputs:
-            # 创建临时批处理文件（包含 exit 命令）
-            bat_file = self._create_auto_input_script(script_path, auto_inputs, conda_env)
-            # 直接启动批处理文件
-            cmd = f'cmd /c start "{title}" cmd /c "{bat_file}"'
-        else:
-            # 直接启动，使用当前 Python 解释器
-            # pause 让用户按任意键后再 exit，避免终端自动关闭
-            cmd = f'cmd /c start "{title}" cmd /c ""{self.python_exe}" {script_path} & pause & exit"'
+        if sys.platform == 'win32':
+            # --- Windows ---
+            if auto_inputs:
+                bat_file = self._create_auto_input_script(script_path, auto_inputs, conda_env)
+                cmd = f'cmd /c start "{title}" cmd /c "{bat_file}"'
+            else:
+                cmd = f'cmd /c start "{title}" cmd /c ""{self.python_exe}" {script_path} & pause & exit"'
+            return subprocess.Popen(cmd, shell=True)
 
-        process = subprocess.Popen(cmd, shell=True)
-        return process
+        # macOS / Linux 公共逻辑：将要执行的命令写入临时 .sh 脚本
+        # 这样可以完全避免在 AppleScript / 终端参数中处理引号转义
+        if auto_inputs:
+            sh_file = self._create_auto_input_script(script_path, auto_inputs, conda_env)
+        else:
+            timestamp = int(time.time())
+            sh_file = f"temp_input_{timestamp}.sh"
+            project_dir = os.getcwd()
+            with open(sh_file, 'w', encoding='utf-8') as f:
+                f.write('#!/bin/bash\n')
+                f.write(f'cd "{project_dir}"\n')
+                f.write(f'"{self.python_exe}" "{script_path}"\n')
+                f.write('echo\nread -p "Press any key to exit..."\n')
+            os.chmod(sh_file, 0o755)
+            self.temp_files.append(sh_file)
+
+        abs_sh = os.path.abspath(sh_file)
+
+        if sys.platform == 'darwin':
+            # --- macOS：用 osascript 在 Terminal.app 中打开新窗口 ---
+            apple_script = f'tell application "Terminal" to do script "bash \\"{abs_sh}\\""'
+            return subprocess.Popen(['osascript', '-e', apple_script])
+
+        else:
+            # --- Linux：依次尝试常见终端模拟器 ---
+            import shutil
+            candidates = [
+                ['x-terminal-emulator', '-e', f'bash "{abs_sh}"'],
+                ['gnome-terminal', '--', 'bash', abs_sh],
+                ['xfce4-terminal', '-e', f'bash "{abs_sh}"'],
+                ['konsole', '-e', f'bash "{abs_sh}"'],
+                ['xterm', '-e', f'bash "{abs_sh}"'],
+            ]
+            for args in candidates:
+                if shutil.which(args[0]):
+                    return subprocess.Popen(args)
+            # 降级：无可用终端时在后台静默运行
+            return subprocess.Popen([self.python_exe, script_path])
 
     def _cleanup_temp_files(self):
         """清理记录的临时文件（内部方法）"""
@@ -264,8 +314,8 @@ class ProcessManager:
         """
         try:
             import glob
-            # 查找所有匹配的临时文件
-            temp_files = glob.glob('temp_input_*.bat')
+            # 查找所有匹配的临时文件（Windows .bat / macOS+Linux .sh）
+            temp_files = glob.glob('temp_input_*.bat') + glob.glob('temp_input_*.sh')
             
             for temp_file in temp_files:
                 try:
@@ -292,8 +342,17 @@ class ProcessManager:
             dict: 启动结果
         """
         try:
-            # 快速检查：仅检查已记录的 PID，跳过全系统扫描
-            db_running = self._is_process_running_fast('database')
+            # 数据库：直接探测端口 5000 是否在监听，避免误判残留进程
+            # 主程序：检查已记录的 PID（主程序无固定端口可探测）
+            import socket
+            def _port_open(host: str, port: int) -> bool:
+                try:
+                    with socket.create_connection((host, port), timeout=1.0):
+                        return True
+                except (socket.error, OSError):
+                    return False
+
+            db_running = _port_open('127.0.0.1', 5000)
             main_running = self._is_process_running_fast('main')
 
             # If everything is already running, treat it as success (idempotent start).
@@ -333,7 +392,12 @@ class ProcessManager:
                     conda_env=conda_env
                 )
 
-            # 立即启动主程序（不等待数据库）
+                # macOS/Linux 上终端启动较慢，需等待数据库服务初始化后再启主程序
+                # Windows 上时序本身足够，无需等待
+                if sys.platform != 'win32':
+                    time.sleep(8)
+
+            # 启动主程序
             main_script = 'src/main.py'
             if not os.path.exists(main_script):
                 return {
@@ -418,35 +482,49 @@ class ProcessManager:
             if pid is None:
                 continue
 
-            # 先尝试获取父 cmd.exe PID（必须在 kill 前拿，否则进程消失后拿不到）
-            parent_pid = None
-            try:
-                proc = psutil.Process(pid)
-                parent = proc.parent()
-                if parent and 'cmd' in parent.name().lower():
-                    parent_pid = parent.pid
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
+            if sys.platform == 'win32':
+                # --- Windows：taskkill 强制结束进程树 + 关闭父 cmd 窗口 ---
+                parent_pid = None
+                try:
+                    proc = psutil.Process(pid)
+                    parent = proc.parent()
+                    if parent and 'cmd' in parent.name().lower():
+                        parent_pid = parent.pid
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
 
-            # 1. 用 taskkill /F /T 强制结束 Python 进程及其子进程树
-            try:
-                subprocess.run(
-                    ['taskkill', '/F', '/T', '/PID', str(pid)],
-                    capture_output=True, timeout=10
-                )
-                stopped.append(name)
-            except Exception as e:
-                errors.append(f"{name}: {str(e)}")
-
-            # 2. 结束父 cmd.exe 进程树，关闭终端窗口
-            if parent_pid:
                 try:
                     subprocess.run(
-                        ['taskkill', '/F', '/T', '/PID', str(parent_pid)],
-                        capture_output=True, timeout=5
+                        ['taskkill', '/F', '/T', '/PID', str(pid)],
+                        capture_output=True, timeout=10
                     )
-                except Exception:
-                    pass  # 父进程可能已随 Python 退出而自动关闭
+                    stopped.append(name)
+                except Exception as e:
+                    errors.append(f"{name}: {str(e)}")
+
+                if parent_pid:
+                    try:
+                        subprocess.run(
+                            ['taskkill', '/F', '/T', '/PID', str(parent_pid)],
+                            capture_output=True, timeout=5
+                        )
+                    except Exception:
+                        pass  # 父进程可能已随 Python 退出而自动关闭
+            else:
+                # --- macOS / Linux：用 psutil 递归终止进程树 ---
+                try:
+                    proc = psutil.Process(pid)
+                    for child in proc.children(recursive=True):
+                        try:
+                            child.kill()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                    proc.kill()
+                    stopped.append(name)
+                except psutil.NoSuchProcess:
+                    stopped.append(name)  # 已不存在，视为成功
+                except Exception as e:
+                    errors.append(f"{name}: {str(e)}")
 
         # 清理临时文件
         self._cleanup_temp_files()
