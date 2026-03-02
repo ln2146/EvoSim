@@ -22,7 +22,7 @@ except (ImportError, ValueError):
     from moderation.types import ModerationSeverity, ModerationFilterConfig
 
 from ..types import PostCandidate
-from database.database_manager import fetch_one
+from database.database_manager import fetch_one, fetch_all
 
 
 logger = logging.getLogger(__name__)
@@ -81,13 +81,24 @@ class ModerationFilter:
             else self.config.apply_degradation
         )
 
+        # 批量查询被删帖（单次 DB 请求，避免循环内 N 次查询）
+        taken_down_ids: set = set()
+        if self.config.filter_taken_down and candidates:
+            post_ids = tuple(str(c.post_id) for c in candidates)
+            placeholders = ','.join('?' * len(post_ids))
+            rows = fetch_all(
+                f'SELECT post_id FROM posts WHERE post_id IN ({placeholders}) AND status = "taken_down"',
+                post_ids
+            )
+            taken_down_ids = {str(row['post_id']) for row in rows}
+
         filtered = []
         removed_count = 0
         degraded_count = 0
 
         for candidate in candidates:
-            # 1. 过滤已删帖
-            if self.config.filter_taken_down and candidate.status == 'taken_down':
+            # 1. 过滤已删帖（实时 DB 状态，非快照字段）
+            if self.config.filter_taken_down and str(candidate.post_id) in taken_down_ids:
                 removed_count += 1
                 continue
 

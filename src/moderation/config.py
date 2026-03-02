@@ -80,9 +80,9 @@ class ModerationActionConfig:
     # 严重程度到默认动作的映射
     severity_to_action: Dict[ModerationSeverity, ModerationAction] = field(
         default_factory=lambda: {
-            ModerationSeverity.LOW: ModerationAction.VISIBILITY_DEGRADATION,
-            ModerationSeverity.MEDIUM: ModerationAction.WARNING_LABEL,
-            ModerationSeverity.HIGH: ModerationAction.WARNING_LABEL,
+            ModerationSeverity.LOW: ModerationAction.WARNING_LABEL,
+            ModerationSeverity.MEDIUM: ModerationAction.VISIBILITY_DEGRADATION,
+            ModerationSeverity.HIGH: ModerationAction.VISIBILITY_DEGRADATION,
             ModerationSeverity.CRITICAL: ModerationAction.HARD_TAKEDOWN,
         }
     )
