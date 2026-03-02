@@ -71,7 +71,8 @@ class CompositeProvider:
         self,
         content: str,
         metadata: Dict[str, Any] = None,
-        strategy: str = "confidence"
+        strategy: str = "confidence",
+        keyword_only: bool = False
     ) -> Optional[ModerationVerdict]:
         """
         综合检查内容
@@ -80,6 +81,7 @@ class CompositeProvider:
             content: 待检查的内容
             metadata: 额外元数据
             strategy: 综合策略 ("priority", "vote", "confidence")
+            keyword_only: 是否只使用关键词审核（发布前快速检查）
 
         Returns:
             审核裁决，如果所有提供者都认为内容安全则返回 None
@@ -93,6 +95,18 @@ class CompositeProvider:
                 "CompositeProvider.check() called but no moderation providers are enabled. "
                 "Please enable at least one moderation provider (openai or keyword) in config."
             )
+
+        # 如果只使用关键词审核，直接调用关键词提供者
+        if keyword_only:
+            for name, weight, provider in self.providers:
+                if name == "keyword":
+                    try:
+                        return provider.check(content, metadata)
+                    except Exception as e:
+                        logger.error(f"Keyword provider error: {type(e).__name__}: {e}")
+                        return None
+            logger.warning("keyword_only=True but keyword provider not enabled")
+            return None
 
         if strategy == "priority":
             return self._check_priority(content, metadata)

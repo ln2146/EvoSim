@@ -127,7 +127,8 @@ class ModerationService:
         post_id: str,
         user_id: str,
         content: str,
-        metadata: Dict[str, Any] = None
+        metadata: Dict[str, Any] = None,
+        keyword_only: bool = False
     ) -> Optional[ModerationVerdict]:
         """
         检查单个帖子
@@ -137,6 +138,7 @@ class ModerationService:
             user_id: 用户 ID
             content: 帖子内容
             metadata: 额外元数据
+            keyword_only: 是否只使用关键词审核（发布前）
 
         Returns:
             审核裁决，None 表示不需要干预
@@ -151,8 +153,9 @@ class ModerationService:
         mod_log = _get_moderation_logger()
         content_preview = (content or '').replace('\n', ' ')[:80]
         engagement = (metadata or {}).get('num_likes', 0) + (metadata or {}).get('num_shares', 0)
+        check_type = "KEYWORD" if keyword_only else "LLM"
         mod_log.info(
-            f"[CHECK] post={post_id} | user={user_id} | "
+            f"[{check_type}_CHECK] post={post_id} | user={user_id} | "
             f"engagement={engagement} | content=\"{content_preview}\""
         )
 
@@ -160,7 +163,7 @@ class ModerationService:
         self.stats.total_checked += 1
 
         # 1. 调用审核提供者
-        verdict = self.provider.check(content, metadata)
+        verdict = self.provider.check(content, metadata, keyword_only=keyword_only)
 
         if verdict is None:
             mod_log.info(f"  [PASS] post={post_id} | no action required")
@@ -229,12 +232,13 @@ class ModerationService:
 
         return verdict
 
-    def check_batch(self, posts: List[Dict[str, Any]]) -> List[ModerationVerdict]:
+    def check_batch(self, posts: List[Dict[str, Any]], keyword_only: bool = False) -> List[ModerationVerdict]:
         """
         批量检查帖子
 
         Args:
             posts: 帖子字典列表，每个包含 post_id, user_id, content
+            keyword_only: 是否只使用关键词审核
 
         Returns:
             裁决列表
@@ -247,7 +251,8 @@ class ModerationService:
             self._ensure_provider_initialized()
 
         mod_log = _get_moderation_logger()
-        mod_log.info(f"[BATCH_START] posts_to_check={len(posts)}")
+        check_type = "KEYWORD" if keyword_only else "LLM"
+        mod_log.info(f"[{check_type}_BATCH_START] posts_to_check={len(posts)}")
 
         verdicts = []
 
@@ -257,6 +262,7 @@ class ModerationService:
                 user_id=post.get("user_id") or post.get("author_id"),
                 content=post.get("content", ""),
                 metadata=post,
+                keyword_only=keyword_only,
             )
             if verdict:
                 verdicts.append(verdict)
@@ -266,23 +272,25 @@ class ModerationService:
         action_counts = Counter(v.action for v in verdicts)
         category_counts = Counter(v.category for v in verdicts)
         mod_log.info(
-            f"[BATCH_END] checked={len(posts)} | flagged={len(verdicts)} | "
+            f"[{check_type}_BATCH_END] checked={len(posts)} | flagged={len(verdicts)} | "
             f"actions={dict(action_counts)} | categories={dict(category_counts)}"
         )
-        logger.info(f"Batch moderation completed: {len(verdicts)} actions taken")
+        logger.info(f"Batch moderation completed ({check_type}): {len(verdicts)} actions taken")
         return verdicts
 
     def check_posts(
         self,
         posts: List[Dict[str, Any]],
-        min_engagement: int = None
+        min_engagement: int = None,
+        use_keyword_only: bool = False
     ) -> List[ModerationVerdict]:
         """
-        检查帖子（根据配置）
+        检查帖子（分层审核策略）
 
         Args:
             posts: 帖子列表
-            min_engagement: 最小互动数阈值
+            min_engagement: 最小互动数阈值（None 时使用 llm_check_threshold）
+            use_keyword_only: 是否只使用关键词审核（发布前检查）
 
         Returns:
             裁决列表
@@ -300,10 +308,17 @@ class ModerationService:
         if not self.provider:
             self._ensure_provider_initialized()
 
-        # 应用互动数阈值（显式 None 判断，确保 min_engagement=0 生效）
-        threshold = min_engagement if min_engagement is not None else self.config.check_threshold_engagement
+        # 分层审核逻辑
+        if use_keyword_only:
+            # 发布前：只用关键词审核
+            threshold = self.config.keyword_check_threshold
+            mod_log.info(f"[KEYWORD_CHECK] checking {len(posts)} posts at publish time")
+        else:
+            # 发布后：使用 LLM 审核
+            threshold = min_engagement if min_engagement is not None else self.config.llm_check_threshold
+            mod_log.info(f"[LLM_CHECK] checking posts with engagement >= {threshold}")
 
-        # 过滤出需要检查的帖子（所有帖子，不限于新闻）
+        # 过滤出需要检查的帖子
         posts_to_check = [
             post for post in posts
             if (post.get("num_likes", 0) + post.get("num_shares", 0)) >= threshold
@@ -318,8 +333,8 @@ class ModerationService:
             logger.info(f"No posts meet engagement threshold {threshold} (total posts: {len(posts)})")
             return []
 
-        logger.info(f"🔍 Moderation checking {len(posts_to_check)} posts (threshold={threshold})")
-        return self.check_batch(posts_to_check)
+        logger.info(f"🔍 Moderation checking {len(posts_to_check)} posts (threshold={threshold}, keyword_only={use_keyword_only})")
+        return self.check_batch(posts_to_check, keyword_only=use_keyword_only)
 
     # 保持向后兼容的别名
     def check_news_posts(

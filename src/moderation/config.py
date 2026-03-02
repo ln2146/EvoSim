@@ -106,10 +106,13 @@ class ModerationConfig:
     )
     keyword_provider: ModerationProviderConfig = field(
         default_factory=lambda: ModerationProviderConfig(
-            enabled=False,
-            threshold=0.6,
+            enabled=True,   # 启用关键词审核（发布前）
+            threshold=0.5,  # 关键词置信度阈值
             keywords={
-                "hate_speech": ["仇恨", "歧视"],
+                "hate_speech": ["仇恨", "歧视", "种族主义"],
+                "violence": ["暴力", "杀人", "袭击"],
+                "sexual": ["色情", "淫秽"],
+                "spam": ["加微信", "扫码", "代购"],
             }
         )
     )
@@ -127,7 +130,8 @@ class ModerationConfig:
     )
 
     # 审核触发条件
-    check_threshold_engagement: int = 5  # 互动数阈值
+    keyword_check_threshold: int = 0  # 关键词审核：发布时检查（互动数 = 0）
+    llm_check_threshold: int = 8      # LLM 审核：互动数 ≥ 8 时检查
 
     # 异步批处理配置
     batch_size: int = 10
@@ -179,7 +183,8 @@ class ModerationConfig:
                 ModerationActionConfig,
                 action_config_data
             ) if action_config_data else ModerationActionConfig(),
-            check_threshold_engagement=config_dict.get('check_threshold_engagement', 5),
+            keyword_check_threshold=config_dict.get('keyword_check_threshold', 0),
+            llm_check_threshold=config_dict.get('llm_check_threshold', 8),
             batch_size=config_dict.get('batch_size', 10),
             batch_interval_seconds=config_dict.get('batch_interval_seconds', 60),
         )
@@ -192,7 +197,8 @@ class ModerationConfig:
             'openai_provider': asdict(self.openai_provider),
             'keyword_provider': asdict(self.keyword_provider),
             'actions': asdict(self.actions),
-            'check_threshold_engagement': self.check_threshold_engagement,
+            'keyword_check_threshold': self.keyword_check_threshold,
+            'llm_check_threshold': self.llm_check_threshold,
             'batch_size': self.batch_size,
             'batch_interval_seconds': self.batch_interval_seconds,
         }

@@ -21,15 +21,20 @@ class KeywordProvider:
     关键词审核提供者
 
     基于预定义的关键词列表进行简单快速的审核
-    适合作为 OpenAI API 的前置过滤器
+    适合作为 LLM 审核的前置过滤器
+
+    特性:
+    - 支持白名单上下文（避免误杀正面表达）
+    - 支持正则表达式精确匹配
+    - 默认只降级不删除（保守策略）
     """
 
-    # 默认严重程度映射
+    # 默认严重程度映射（关键词审核统一使用 LOW，只降级）
     DEFAULT_SEVERITY_MAP = {
-        "hate_speech": ModerationSeverity.HIGH,
+        "hate_speech": ModerationSeverity.LOW,      # 降级 20%
         "spam": ModerationSeverity.LOW,
-        "violence": ModerationSeverity.HIGH,
-        "sexual": ModerationSeverity.HIGH,
+        "violence": ModerationSeverity.LOW,
+        "sexual": ModerationSeverity.MEDIUM,        # 色情稍严格，降级 50%
         "controversial": ModerationSeverity.LOW,
     }
 
@@ -44,7 +49,7 @@ class KeywordProvider:
             "buy now", "click here", "free money"
         ],
         "violence": [
-            "暴力", "杀", "砍", "袭击", "爆炸",
+            "暴力", "杀人", "砍人", "袭击", "爆炸",
             "violence", "murder", "attack", "bomb"
         ],
         "sexual": [
@@ -55,6 +60,25 @@ class KeywordProvider:
             "争议", "质疑", "不明确",
         ],
     }
+
+    # 白名单上下文（包含这些词组时不触发）
+    WHITELIST_CONTEXTS = [
+        # 反对/谴责类
+        r"反对\s*仇恨", r"谴责\s*仇恨", r"抵制\s*仇恨",
+        r"反对\s*歧视", r"谴责\s*歧视", r"抵制\s*歧视",
+        r"反对\s*暴力", r"谴责\s*暴力", r"抵制\s*暴力",
+
+        # 讨论/分析类
+        r"讨论\s*仇恨", r"分析\s*歧视", r"研究\s*暴力",
+
+        # 引用/报道类
+        r"报道.*?暴力", r"新闻.*?暴力", r"事件.*?暴力",
+        r"暴力.*?事件", r"暴力.*?报道",
+
+        # 英文
+        r"against\s+hate", r"condemn\s+hate", r"oppose\s+discrimination",
+        r"anti-violence", r"stop\s+violence",
+    ]
 
     def __init__(self, config: ModerationProviderConfig):
         """
@@ -107,6 +131,11 @@ class KeywordProvider:
         if not self.enabled:
             return None
 
+        # 白名单检查：如果匹配白名单上下文，直接放行
+        if self._is_whitelisted(content):
+            logger.debug(f"Content whitelisted: matched positive context")
+            return None
+
         content_lower = content.lower()
         detected = []
 
@@ -153,6 +182,24 @@ class KeywordProvider:
 
         logger.debug(f"Keyword provider flagged content: {verdict.reason}")
         return verdict
+
+    def _is_whitelisted(self, content: str) -> bool:
+        """
+        检查内容是否匹配白名单上下文
+
+        Args:
+            content: 待检查的内容
+
+        Returns:
+            是否匹配白名单
+        """
+        for pattern in self.WHITELIST_CONTEXTS:
+            try:
+                if re.search(pattern, content, re.IGNORECASE):
+                    return True
+            except re.error as e:
+                logger.warning(f"Invalid whitelist pattern '{pattern}': {e}")
+        return False
 
     def add_keywords(self, category: str, keywords: List[str], severity: ModerationSeverity = None):
         """
