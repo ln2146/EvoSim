@@ -148,9 +148,6 @@ class Simulation:
             ],
         }
 
-        # Set check_news_only=True based on user requirement
-        moderation_config.check_news_only = True
-
         self.moderation_service = ModerationService(moderation_config)
         logging.info(f"🛡️ Moderation service initialized (controlled by control_flags.moderation_enabled)")
 

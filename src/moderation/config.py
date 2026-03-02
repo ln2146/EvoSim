@@ -127,7 +127,6 @@ class ModerationConfig:
     )
 
     # 审核触发条件
-    check_news_only: bool = True  # 是否只检查新闻
     check_threshold_engagement: int = 5  # 互动数阈值
 
     # 异步批处理配置
@@ -180,7 +179,6 @@ class ModerationConfig:
                 ModerationActionConfig,
                 action_config_data
             ) if action_config_data else ModerationActionConfig(),
-            check_news_only=config_dict.get('check_news_only', True),
             check_threshold_engagement=config_dict.get('check_threshold_engagement', 5),
             batch_size=config_dict.get('batch_size', 10),
             batch_interval_seconds=config_dict.get('batch_interval_seconds', 60),
@@ -194,7 +192,6 @@ class ModerationConfig:
             'openai_provider': asdict(self.openai_provider),
             'keyword_provider': asdict(self.keyword_provider),
             'actions': asdict(self.actions),
-            'check_news_only': self.check_news_only,
             'check_threshold_engagement': self.check_threshold_engagement,
             'batch_size': self.batch_size,
             'batch_interval_seconds': self.batch_interval_seconds,
