@@ -111,21 +111,28 @@ class ModerationConfig:
             keywords={
                 "hate_speech": [
                     # 中文
-                    "仇恨", "歧视", "种族主义", "纳粹", "恐怖分子",
+                    "仇恨", "歧视", "种族主义", "纳粹",
                     "人渣", "贱人", "畜生", "该死", "去死",
                     "低等", "劣等", "下等人", "垃圾人",
                     # 英文
-                    "should die", "kill yourself", "hate speech",
-                    "racist", "nazi", "terrorist"
+                    "should die", "kill yourself", "hate speech", "kys",
+                    "racist", "nazi", "subhuman",
+                    "scum", "trash", "vermin", "filth",
+                    "inferior race", "white supremacy", "ethnic cleansing",
+                    "go back to", "you people", "your kind",
                 ],
                 "violence": [
                     # 中文
                     "暴力", "杀人", "砍人", "袭击", "爆炸",
                     "屠杀", "血洗", "灭门", "枪击", "刺杀",
                     "炸弹", "恐袭", "武器", "刀砍", "枪杀",
+                    "恐怖分子",
                     # 英文
-                    "violence", "murder", "attack", "bomb",
-                    "kill", "shoot", "stab", "massacre"
+                    "violence", "murder", "attack", "bomb", "massacre",
+                    "kill", "shoot", "stab", "assassinate",
+                    "blow up", "gun down", "mass shooting",
+                    "terrorist attack", "terrorist", "suicide bomber", "school shooter",
+                    "lynch", "execute", "slaughter", "butcher",
                 ],
                 "sexual": [
                     # 中文
@@ -133,7 +140,10 @@ class ModerationConfig:
                     "卖淫", "嫖娼", "援交", "包养",
                     # 英文
                     "porn", "nude", "sex video", "prostitution",
-                    "escort", "hookup"
+                    "escort", "hookup", "nsfw", "xxx",
+                    "onlyfans leak", "sex tape", "nudes leaked",
+                    "sexual content", "adult content", "explicit",
+                    "cam girl", "sugar daddy", "sex work",
                 ],
                 "spam": [
                     # 中文
@@ -141,8 +151,12 @@ class ModerationConfig:
                     "刷单", "贷款", "办证", "发票", "推广",
                     "加群", "私聊", "咨询", "点击链接",
                     # 英文
-                    "buy now", "click here", "free money",
-                    "earn cash", "work from home", "limited offer"
+                    "buy now", "click here", "free money", "limited offer",
+                    "earn cash", "work from home", "make money fast",
+                    "dm me", "check bio", "link in bio", "click link",
+                    "crypto scam", "investment opportunity", "get rich quick",
+                    "follow for follow", "like for like", "sub for sub",
+                    "drop shipping", "mlm", "pyramid scheme",
                 ],
             }
         )
