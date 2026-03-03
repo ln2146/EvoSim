@@ -74,6 +74,7 @@ class LLMProvider:
         try:
             from multi_model_selector import multi_model_selector
             client, model_name = multi_model_selector.create_openai_client(role="moderation")
+            logger.info(f"[LLM_CALL] Calling model={model_name} for content length={len(content)}")
             response = client.chat.completions.create(
                 model=model_name,
                 messages=[
@@ -83,8 +84,11 @@ class LLMProvider:
                 max_tokens=150,
                 temperature=0.1,
             )
-            return response.choices[0].message.content.strip()
+            raw_response = response.choices[0].message.content.strip()
+            logger.debug(f"[LLM_RESPONSE] raw={raw_response[:200]}")
+            return raw_response
         except Exception as e:
+            logger.error(f"[LLM_ERROR] API call failed: {e}")
             raise RuntimeError(f"LLM moderation API call failed: {e}") from e
 
     def _parse_response(
@@ -111,7 +115,7 @@ class LLMProvider:
             ) from e
 
         if not result.get("flagged"):
-            logger.debug("LLM moderation: content not flagged")
+            logger.info(f"[LLM_PASS] content not flagged")
             return None
 
         # 解析分类
@@ -146,5 +150,5 @@ class LLMProvider:
             metadata=metadata or {},
         )
 
-        logger.info(f"LLM moderation flagged: [{severity_str}/{category_str}] {reason} (conf={confidence:.2f})")
+        logger.info(f"[LLM_FLAGGED] {reason} | category={category_str} | severity={severity_str} | confidence={confidence:.2f}")
         return verdict

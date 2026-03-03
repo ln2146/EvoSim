@@ -48,21 +48,21 @@ class CompositeProvider:
             provider = LLMProvider(self.config.llm_provider)
             weight = self.config.llm_provider.weight
             self.providers.append(("llm", weight, provider))
-            logger.info("Initialized LLM moderation provider")
+            logger.info(f"[COMPOSITE_INIT] LLM provider initialized | weight={weight}")
 
         # Keyword Provider（兜底：无外部依赖，覆盖明显模式）
         if self.config.keyword_provider.enabled:
             provider = KeywordProvider(self.config.keyword_provider)
             weight = self.config.keyword_provider.weight
             self.providers.append(("keyword", weight, provider))
-            logger.info("Initialized keyword moderation provider")
+            logger.info(f"[COMPOSITE_INIT] Keyword provider initialized | weight={weight}")
 
         # OpenAI Moderation API Provider（已废弃，需独立付费账户）
         if self.config.openai_provider.enabled:
             provider = OpenAIProvider(self.config.openai_provider)
             weight = self.config.openai_provider.weight
             self.providers.append(("openai", weight, provider))
-            logger.info("Initialized OpenAI moderation provider")
+            logger.info(f"[COMPOSITE_INIT] OpenAI provider initialized | weight={weight}")
 
         if not self.providers:
             logger.warning("No moderation providers enabled")
@@ -103,9 +103,9 @@ class CompositeProvider:
                     try:
                         return provider.check(content, metadata)
                     except Exception as e:
-                        logger.error(f"Keyword provider error: {type(e).__name__}: {e}")
+                        logger.error(f"[KEYWORD_ERROR] {type(e).__name__}: {e}")
                         return None
-            logger.warning("keyword_only=True but keyword provider not enabled")
+            logger.warning("[COMPOSITE_WARN] keyword_only=True but keyword provider not enabled")
             return None
 
         if strategy == "priority":
@@ -127,10 +127,10 @@ class CompositeProvider:
             try:
                 verdict = provider.check(content, metadata)
             except Exception as e:
-                logger.error(f"Provider '{name}' raised an error (skipped): {type(e).__name__}: {e}")
+                logger.error(f"[PROVIDER_ERROR] {name} raised {type(e).__name__}: {e}")
                 continue
             if verdict:
-                logger.debug(f"Provider '{name}' returned a verdict")
+                logger.info(f"[PRIORITY_VERDICT] provider={name} | category={verdict.category} | severity={verdict.severity}")
                 return verdict
 
         return None
@@ -149,12 +149,13 @@ class CompositeProvider:
             try:
                 verdict = provider.check(content, metadata)
             except Exception as e:
-                logger.error(f"Provider '{name}' raised an error (skipped): {type(e).__name__}: {e}")
+                logger.error(f"[PROVIDER_ERROR] {name} raised {type(e).__name__}: {e}")
                 continue
             if verdict:
                 # 加权置信度
                 weighted_confidence = verdict.confidence * weight
                 verdicts.append((name, verdict, weighted_confidence))
+                logger.info(f"[CONFIDENCE_RESULT] provider={name} | raw_conf={verdict.confidence:.2f} | weight={weight} | weighted={weighted_confidence:.2f}")
 
         if not verdicts:
             return None
@@ -162,7 +163,7 @@ class CompositeProvider:
         # 返回置信度最高的
         verdicts.sort(key=lambda x: x[2], reverse=True)
         name, verdict, confidence = verdicts[0]
-        logger.debug(f"Highest confidence verdict from '{name}': {confidence:.2f}")
+        logger.info(f"[CONFIDENCE_WINNER] provider={name} | final_confidence={confidence:.2f} | category={verdict.category} | severity={verdict.severity}")
 
         return verdict
 
@@ -180,16 +181,18 @@ class CompositeProvider:
             try:
                 verdict = provider.check(content, metadata)
             except Exception as e:
-                logger.error(f"Provider '{name}' raised an error (skipped): {type(e).__name__}: {e}")
+                logger.error(f"[PROVIDER_ERROR] {name} raised {type(e).__name__}: {e}")
                 continue
             if verdict:
                 verdicts.append((name, verdict, weight))
+                logger.info(f"[VOTE_RESULT] provider={name} voted FLAG | weight={weight}")
 
         if not verdicts:
             return None
 
         # 如果只有一个提供者返回结果，直接返回
         if len(verdicts) == 1:
+            logger.info(f"[VOTE_SINGLE] only one provider flagged, returning: {verdicts[0][0]}")
             return verdicts[0][1]
 
         # 计算投票权重
@@ -203,8 +206,10 @@ class CompositeProvider:
                 key=lambda x: list(ModerationSeverity).index(x[1].severity),
                 reverse=True
             )
+            logger.info(f"[VOTE_PASSED] flagged_weight={flagged_weight:.1f} > threshold={total_weight/2:.1f} | winner={verdicts[0][0]}")
             return verdicts[0][1]
 
+        logger.info(f"[VOTE_FAILED] flagged_weight={flagged_weight:.1f} <= threshold={total_weight/2:.1f}, no action")
         return None
 
     def check_batch(

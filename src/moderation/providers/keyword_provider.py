@@ -128,7 +128,7 @@ class KeywordProvider:
             for keyword in keyword_list:
                 self.keyword_map[keyword.lower()] = (category_enum, severity)
 
-        logger.debug(f"Built keyword index with {len(self.keyword_map)} keywords")
+        logger.info(f"[KEYWORD_INIT] Built keyword index with {len(self.keyword_map)} keywords across {len(keywords)} categories")
 
     def check(self, content: str, metadata: Dict[str, Any] = None) -> Optional[ModerationVerdict]:
         """
@@ -146,7 +146,7 @@ class KeywordProvider:
 
         # 白名单检查：如果匹配白名单上下文，直接放行
         if self._is_whitelisted(content):
-            logger.debug(f"Content whitelisted: matched positive context")
+            logger.info(f"[KEYWORD_WHITELIST] content matched positive context pattern, passed")
             return None
 
         content_lower = content.lower()
@@ -193,7 +193,7 @@ class KeywordProvider:
             metadata=metadata or {},
         )
 
-        logger.debug(f"Keyword provider flagged content: {verdict.reason}")
+        logger.info(f"[KEYWORD_FLAGGED] {verdict.reason} | category={category_enum.value} | severity={severity.value} | confidence={confidence:.2f}")
         return verdict
 
     def _is_whitelisted(self, content: str) -> bool:

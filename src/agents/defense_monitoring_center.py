@@ -115,6 +115,8 @@ class NicheOccupancyTracker:
                 "contested": 0,
                 "malicious_percentage": 0.0,
                 "defense_percentage": 0.0,
+                "malicious_side_percentage": 0.0,
+                "defense_side_percentage": 0.0,
                 "topics_detail": []
             }
 

@@ -34,7 +34,14 @@ _moderation_logger = None
 
 
 def _get_moderation_logger():
-    """获取或创建审核审计日志记录器，输出到 logs/moderation/"""
+    """
+    获取或创建审核日志记录器，输出到 logs/moderation/
+
+    日志架构：
+    - FileHandler 挂在 `moderation` 父级 logger 上
+    - 所有 `moderation.*` 子 logger（service、providers）的日志自动传播到父级
+    - 这样 keyword_provider 和 llm_provider 的详细日志也会写入同一文件
+    """
     global _moderation_logger
     if _moderation_logger is None:
         log_dir = os.path.join(
@@ -45,14 +52,21 @@ def _get_moderation_logger():
 
         log_file = os.path.join(log_dir, f'moderation_{datetime.now().strftime("%Y%m%d")}.log')
 
+        # 父级 logger：接收所有 moderation.* 子 logger 的传播日志
+        parent_logger = logging.getLogger('moderation')
+        parent_logger.setLevel(logging.DEBUG)  # 捕获 DEBUG 及以上级别
+
+        if not parent_logger.handlers:
+            fh = logging.FileHandler(log_file, encoding='utf-8')
+            fh.setLevel(logging.DEBUG)  # 文件记录所有详细日志
+            # 格式包含 logger 名称，便于区分来源（service/keyword_provider/llm_provider）
+            fh.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            parent_logger.addHandler(fh)
+
+        # 子 logger 用于 audit 专用的高层摘要日志
         _moderation_logger = logging.getLogger('moderation.audit')
         _moderation_logger.setLevel(logging.INFO)
-
-        if not _moderation_logger.handlers:
-            fh = logging.FileHandler(log_file, encoding='utf-8')
-            fh.setLevel(logging.INFO)
-            fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-            _moderation_logger.addHandler(fh)
+        # 不再单独添加 handler，日志传播到父级 moderation logger
 
     return _moderation_logger
 
@@ -89,6 +103,9 @@ class ModerationService:
 
     def _init_components(self):
         """初始化提供者和动作"""
+        # 提前初始化日志器，确保 provider 初始化日志也被捕获
+        _get_moderation_logger()
+
         # 初始化提供者
         if self.config.enabled:
             self.provider = CompositeProvider(self.config)
