@@ -4057,6 +4057,152 @@ def get_post_comments_by_id(post_id: str):
 
 
 # ============================================================================
+# 评论区情绪/极端度分析
+# ============================================================================
+
+@app.route('/analysis/post-comments', methods=['POST'])
+def analyze_post_comments():
+    """分析帖子评论区的情绪度和极端度
+
+    请求体:
+        {"post_id": "<id>"}
+
+    返回:
+        {
+            "post_id": str,
+            "post_content": str,
+            "num_comments": int,
+            "sentiment_score_overall": float | null,   # 0-1
+            "extremeness_score_overall": float | null, # 0-1
+            "summary": str | null,
+            "error": str | null
+        }
+    """
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        post_id = body.get('post_id', '').strip()
+        if not post_id:
+            return jsonify({'error': 'post_id is required'}), 400
+
+        db_name = body.get('db', 'simulation.db')
+        db_path = os.path.join(DATABASE_DIR, db_name)
+        if not os.path.exists(db_path):
+            return jsonify({'error': 'Database not found'}), 404
+
+        conn = sqlite3.connect(db_path, timeout=15)  # 15s 等待 WAL checkpoint
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+        # 查询帖子内容
+        cursor.execute("SELECT content FROM posts WHERE post_id = ? LIMIT 1", (post_id,))
+        post_row = cursor.fetchone()
+        post_content = post_row['content'] if post_row else ''
+
+        # 查询最多 30 条评论（按点赞数降序）
+        cursor.execute("""
+            SELECT content FROM comments
+            WHERE post_id = ?
+            ORDER BY num_likes DESC
+            LIMIT 30
+        """, (post_id,))
+        comment_rows = cursor.fetchall()
+        conn.close()
+
+        comments = [r['content'] for r in comment_rows if r['content']]
+        num_comments = len(comments)
+
+        if not AI_AVAILABLE:
+            return jsonify({
+                'post_id': post_id,
+                'post_content': post_content,
+                'num_comments': num_comments,
+                'sentiment_score_overall': None,
+                'extremeness_score_overall': None,
+                'summary': None,
+                'error': 'AI module not available',
+            })
+
+        if num_comments == 0:
+            return jsonify({
+                'post_id': post_id,
+                'post_content': post_content,
+                'num_comments': 0,
+                'sentiment_score_overall': None,
+                'extremeness_score_overall': None,
+                'summary': '暂无评论',
+                'error': None,
+            })
+
+        # 构建分析 prompt
+        comments_text = '\n'.join(f'{i+1}. {c}' for i, c in enumerate(comments))
+        system_msg = (
+            "You are a social media analysis expert. "
+            "Analyze the comment section of a post and return a JSON object with exactly these keys:\n"
+            '  "sentiment_score": float 0-1 (0=very negative, 0.5=neutral, 1=very positive)\n'
+            '  "extremeness_score": float 0-1 (0=very moderate, 1=very extreme/radical)\n'
+            '  "summary": string, one sentence in Chinese summarizing the overall tone\n'
+            "Return ONLY the JSON object, no markdown fences."
+        )
+        user_msg = (
+            f"Post: {post_content[:300]}\n\n"
+            f"Comments ({num_comments} total, showing top {len(comments)}):\n{comments_text}"
+        )
+
+        openai_client, engine = multi_model_selector.create_openai_client(role='regular')
+        # 直接调 API，不走 generate_llm_response（避免其强制英文约束和不支持 response_format）
+        # timeout=120 给模拟高峰期 API 慢速响应留余量
+        completion = openai_client.chat.completions.create(
+            model=engine,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            temperature=0.2,
+            response_format={"type": "json_object"},
+            timeout=120,
+        )
+        raw = completion.choices[0].message.content or '{}'
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            import re
+            m = re.search(r'\{.*\}', raw, re.DOTALL)
+            parsed = json.loads(m.group()) if m else {}
+        try:
+            sentiment = float(parsed.get('sentiment_score', 0.5))
+        except (TypeError, ValueError):
+            sentiment = 0.5
+        try:
+            extremeness = float(parsed.get('extremeness_score', 0.5))
+        except (TypeError, ValueError):
+            extremeness = 0.5
+        summary = parsed.get('summary') or None
+
+        return jsonify({
+            'post_id': post_id,
+            'post_content': post_content,
+            'num_comments': num_comments,
+            'sentiment_score_overall': round(max(0.0, min(1.0, sentiment)), 4),
+            'extremeness_score_overall': round(max(0.0, min(1.0, extremeness)), 4),
+            'summary': summary,
+            'error': None,
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'post_id': body.get('post_id', '') if 'body' in locals() else '',
+            'post_content': '',
+            'num_comments': 0,
+            'sentiment_score_overall': None,
+            'extremeness_score_overall': None,
+            'summary': None,
+            'error': str(e),
+        }), 500
+
+
+# ============================================================================
 # SSE 事件流 - 实时热度榜更新
 # ============================================================================
 
@@ -4087,76 +4233,72 @@ def event_stream():
     def generate():
         """生成器函数，持续推送热度榜更新"""
         last_fingerprint = None  # 记录上次的 fingerprint
-        
+        calculator = None        # 延迟初始化（等 DB 存在后再创建）
+
         try:
             while True:
                 try:
                     # 获取数据库路径（使用外部变量）
                     db_path = os.path.join(DATABASE_DIR, db_name)
-                    
+
                     if not os.path.exists(db_path):
-                        # 数据库不存在，发送错误事件
-                        yield f'event: error\ndata: {{"error": "Database not found"}}\n\n'
-                        break
-                    
-                    # 创建热度评分计算器
-                    calculator = HeatScoreCalculator(db_path)
-                    
-                    # 获取当前时间步
+                        # 数据库不存在，等待后重试（保持连接，等待模拟启动创建数据库）
+                        calculator = None  # DB 消失时重置，确保重建
+                        time.sleep(2)
+                        continue
+
+                    # 首次或 DB 重新出现时才创建计算器（避免每轮重建）
+                    if calculator is None:
+                        calculator = HeatScoreCalculator(db_path)
+
+                    # 获取当前时间步（一次查询）
                     current_time_step = calculator.get_current_time_step()
-                    
-                    # 查询所有符合条件的帖子
+
+                    # 一次性 JOIN post_timesteps，避免每帖一次额外查询（N+1 问题）
                     conn = sqlite3.connect(db_path)
                     cursor = conn.cursor()
-                    
-                    # 只查询必需字段，过滤条件：status IS NULL OR status != 'taken_down'
+
                     cursor.execute("""
-                        SELECT 
-                            post_id,
-                            summary,
-                            content,
-                            author_id,
-                            created_at,
-                            num_likes,
-                            num_shares,
-                            num_comments
-                        FROM posts
-                        WHERE status IS NULL OR status != 'taken_down'
+                        SELECT
+                            p.post_id,
+                            p.summary,
+                            p.content,
+                            p.author_id,
+                            p.created_at,
+                            p.num_likes,
+                            p.num_shares,
+                            p.num_comments,
+                            pt.time_step
+                        FROM posts p
+                        LEFT JOIN post_timesteps pt ON pt.post_id = p.post_id
+                        WHERE p.status IS NULL OR p.status != 'taken_down'
                     """)
-                    
-                    # 计算每个帖子的热度评分
+
+                    # 计算每个帖子的热度评分（直接用 JOIN 结果，无额外查询）
                     posts_with_scores = []
                     for row in cursor.fetchall():
-                        post = {
-                            'post_id': row[0],
-                            'summary': row[1],
-                            'content': row[2],
-                            'author_id': row[3],
-                            'created_at': row[4],
-                            'num_likes': row[5] or 0,
-                            'num_shares': row[6] or 0,
-                            'num_comments': row[7] or 0
-                        }
-                        
-                        # 计算热度评分
-                        score = calculator.calculate_score(post, current_time_step)
+                        post_time_step = row[8]
+                        engagement = (row[7] or 0) + (row[6] or 0) + (row[5] or 0)
+                        age = max(0, current_time_step - post_time_step) if post_time_step is not None else 0
+                        freshness = max(calculator.MIN_FRESHNESS, 1.0 - calculator.LAMBDA_DECAY * age)
+                        score = (engagement + calculator.BETA_BIAS) * freshness
                         
                         # 处理 excerpt 字段（优先使用 summary，否则截断 content）
-                        if post['summary']:
-                            excerpt = post['summary']
+                        if row[1]:
+                            excerpt = row[1]
                         else:
-                            content = post['content'] or ''
+                            content = row[2] or ''
                             excerpt = content[:100] + ('...' if len(content) > 100 else '')
-                        
+
                         posts_with_scores.append({
-                            'postId': post['post_id'],
+                            'postId': row[0],
                             'excerpt': excerpt,
                             'score': score,
-                            'authorId': post['author_id'],
-                            'createdAt': post['created_at'],
-                            'likeCount': post['num_likes'],
-                            'shareCount': post['num_shares'],
-                            'commentCount': post['num_comments']
+                            'authorId': row[3],
+                            'createdAt': row[4],
+                            'likeCount': row[5] or 0,
+                            'shareCount': row[6] or 0,
+                            'commentCount': row[7] or 0,
                         })
                     
                     conn.close()
@@ -4205,11 +4347,11 @@ def event_stream():
                     print('✅ SSE 客户端断开连接，清理资源')
                     break
                 except Exception as e:
-                    # 发生错误，记录日志并发送错误事件
+                    # 发生错误，记录日志后等待重试（保持连接）
                     import traceback
                     traceback.print_exc()
-                    yield f'event: error\ndata: {{"error": "{str(e)}"}}\n\n'
-                    break
+                    time.sleep(1)
+                    continue
                     
         except GeneratorExit:
             # 客户端断开连接

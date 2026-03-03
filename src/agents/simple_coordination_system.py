@@ -5095,22 +5095,9 @@ class SimpleCoordinationSystem:
                 workflow_logger.info(f"  📋 Applying strategist amplifier instructions: {len(amplifier_instructions)} detailed instructions")
                 workflow_logger.info(f"  🎯 Coordination strategy: {enhanced_amplifier_plan['coordination_strategy']}")
 
-            # Trigger Amplifier right after Strategist using strategy core argument as input;
-            # run in parallel with Leader so both start simultaneously.
-            workflow_logger.info("⚖️ Activating Amplifier Agent cluster...")
-            amplifier_input_text = strategy.get("core_counter_argument", "") or content_text
-
+            # Step 1: Leader generates comments first
             workflow_logger.info("🎯 Leader Agent starts USC process and generates candidate comments...")
-            _leader_result, _amplifier_result = await asyncio.gather(
-                self.leader.generate_strategic_content(strategy, content_text),
-                self._coordinate_amplifier_agents(amplifier_input_text, enhanced_amplifier_plan, target_post_id),
-                return_exceptions=True,
-            )
-
-            # Handle Leader result
-            content_result = _leader_result if not isinstance(_leader_result, Exception) else None
-            if isinstance(_leader_result, Exception):
-                workflow_logger.warning(f"  ⚠️ Leader task raised exception: {_leader_result}")
+            content_result = await self.leader.generate_strategic_content(strategy, content_text)
 
             if not content_result or not content_result.get("success", False):
                 self.current_phase = "error"
@@ -5157,15 +5144,17 @@ class SimpleCoordinationSystem:
                 workflow_logger.warning("⚠️ Second leader comment save failed")
                 logging.warning("⚠️ Second leader comment save failed")
 
-            # Handle Amplifier result (already completed in parallel with Leader above)
-            if isinstance(_amplifier_result, Exception):
-                workflow_logger.warning(f"  ⚠️ amplifier coordination failed: {_amplifier_result}")
+            # Step 2: Amplifier starts after Leader finishes, uses Leader's content as input
+            workflow_logger.info("⚖️ Activating Amplifier Agent cluster...")
+            amplifier_input_text = final_content_1 or content_text
+            try:
+                amplifier_responses = await self._coordinate_amplifier_agents(amplifier_input_text, enhanced_amplifier_plan, target_post_id)
+            except Exception as e:
+                workflow_logger.warning(f"  ⚠️ amplifier coordination failed: {e}")
                 amplifier_responses = []
-            elif _amplifier_result is None:
+            if amplifier_responses is None:
                 amplifier_responses = []
                 workflow_logger.warning("  ⚠️ amplifier coordination returned None, using empty list")
-            else:
-                amplifier_responses = _amplifier_result
 
             workflow_logger.info(f"  ✅ {len(amplifier_responses)} amplifier responses generated")
 

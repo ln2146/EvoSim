@@ -82,11 +82,14 @@ class NicheOccupancyTracker:
     def get_topic_controller(self, topic_id: str) -> str:
         """Determine which faction controls a topic"""
         dominance = self.get_dominance_for_topic(topic_id)
-        
+
         if dominance["malicious"] > 0.5:
             return "malicious"
         elif dominance["defense"] > 0.5:
             return "defense"
+        elif (dominance["neutral"] > dominance["malicious"]
+              and dominance["neutral"] > dominance["defense"]):
+            return "neutral_dominant"
         elif dominance["malicious"] > dominance["defense"]:
             return "malicious_leaning"
         elif dominance["defense"] > dominance["malicious"]:
@@ -108,6 +111,7 @@ class NicheOccupancyTracker:
                 "malicious_leaning": 0,
                 "defense_dominant": 0,
                 "defense_leaning": 0,
+                "neutral_dominant": 0,
                 "contested": 0,
                 "malicious_percentage": 0.0,
                 "defense_percentage": 0.0,
@@ -118,6 +122,7 @@ class NicheOccupancyTracker:
         malicious_leaning = 0
         defense_dominant = 0
         defense_leaning = 0
+        neutral_dominant = 0
         contested = 0
         topics_detail = []
 
@@ -134,6 +139,8 @@ class NicheOccupancyTracker:
                 defense_dominant += 1
             elif controller == "defense_leaning":
                 defense_leaning += 1
+            elif controller == "neutral_dominant":
+                neutral_dominant += 1
             else:  # "contested"
                 contested += 1
 
@@ -157,6 +164,7 @@ class NicheOccupancyTracker:
             "malicious_leaning": malicious_leaning,
             "defense_dominant": defense_dominant,
             "defense_leaning": defense_leaning,
+            "neutral_dominant": neutral_dominant,
             "contested": contested,
             "malicious_percentage": malicious_dominant / total * 100 if total > 0 else 0.0,
             "defense_percentage": defense_dominant / total * 100 if total > 0 else 0.0,
@@ -233,8 +241,12 @@ class AlgorithmicBiasCalculator:
                 "total_engagement": 0
             }
         
-        # Get engagement values
-        engagements = [acc.total_likes + acc.total_comments for acc in self.accounts.values()]
+        # Get engagement values — only active accounts (avoid zero-inflation of Gini)
+        engagements = [
+            acc.total_likes + acc.total_comments
+            for acc in self.accounts.values()
+            if acc.total_likes + acc.total_comments > 0
+        ]
         total_engagement = sum(engagements)
         
         if total_engagement == 0:
@@ -250,9 +262,9 @@ class AlgorithmicBiasCalculator:
         # Calculate Gini coefficient
         gini = self.calculate_gini_coefficient(engagements)
         
-        # Sort accounts by engagement
+        # Sort active accounts by engagement
         sorted_accounts = sorted(
-            self.accounts.values(),
+            (acc for acc in self.accounts.values() if acc.total_likes + acc.total_comments > 0),
             key=lambda a: a.total_likes + a.total_comments,
             reverse=True
         )
@@ -309,26 +321,27 @@ class AlgorithmicBiasCalculator:
                 "bias_assessment": "unknown"
             }
         
-        # Separate by account type
+        # Separate by account type — only active accounts (avoid zero-inflation of Gini)
         malicious_engagements = [
-            acc.total_likes + acc.total_comments 
-            for acc in self.accounts.values() 
-            if acc.account_type == "malicious"
+            acc.total_likes + acc.total_comments
+            for acc in self.accounts.values()
+            if acc.account_type == "malicious" and acc.total_likes + acc.total_comments > 0
         ]
         defense_engagements = [
-            acc.total_likes + acc.total_comments 
-            for acc in self.accounts.values() 
-            if acc.account_type == "defense"
+            acc.total_likes + acc.total_comments
+            for acc in self.accounts.values()
+            if acc.account_type == "defense" and acc.total_likes + acc.total_comments > 0
         ]
         neutral_engagements = [
-            acc.total_likes + acc.total_comments 
-            for acc in self.accounts.values() 
-            if acc.account_type == "neutral"
-        ]
-        
-        all_engagements = [
-            acc.total_likes + acc.total_comments 
+            acc.total_likes + acc.total_comments
             for acc in self.accounts.values()
+            if acc.account_type == "neutral" and acc.total_likes + acc.total_comments > 0
+        ]
+
+        all_engagements = [
+            acc.total_likes + acc.total_comments
+            for acc in self.accounts.values()
+            if acc.total_likes + acc.total_comments > 0
         ]
         
         overall_gini = self.calculate_gini_coefficient(all_engagements)
@@ -558,38 +571,86 @@ class DefenseMonitoringCenter:
         """
         Pull live data from the simulation SQLite connection and refresh all metrics.
 
-        Topic classification:
-          malicious  = agent_type = 'malicious_agent' OR (is_news AND news_type = 'fake')
-          defense    = is_agent_response = 1 OR agent_type = 'amplifier_agent'
-          neutral    = everything else (active posts only)
+        Topic classification (based on author persona JSON):
+          malicious  = persona type contains 'negative'/'malicious' OR fake news post
+          defense    = persona type contains 'amplifier'/'defense', OR posts.is_agent_response=1
+                       Defense agents save COMMENTS (not posts), so we UNION the comments table.
+          neutral    = everything else
 
-        Account classification follows the same logic per author.
-        extreme_score = avg(opinion_monitoring.extremism_level) / 4.0 per user.
+        Account classification follows the same persona logic.
+        extreme_score = 0.85 for malicious users (opinion_monitoring may be empty).
         """
         cursor = conn.cursor()
 
-        # --- Topics: group by root post ---
-        cursor.execute("""
+        # Helper macro: is_malicious expression for a persona column alias
+        _MAL_PERSONA = (
+            "(u.persona LIKE '%\"type\": \"negative\"%'"
+            " OR u.persona LIKE '%''type'': ''negative''%'"
+            " OR u.persona LIKE '%\"type\": \"malicious\"%'"
+            " OR u.persona LIKE '%''type'': ''malicious''%')"
+        )
+        _DEF_PERSONA = (
+            "(u.persona LIKE '%\"type\": \"amplifier\"%'"
+            " OR u.persona LIKE '%''type'': ''amplifier''%'"
+            " OR u.persona LIKE '%\"type\": \"defense\"%'"
+            " OR u.persona LIKE '%''type'': ''defense''%')"
+        )
+
+        # --- Topics: UNION posts + defense comments, grouped by root post ---
+        cursor.execute(f"""
             SELECT
-                COALESCE(original_post_id, post_id)                          AS topic_id,
-                SUBSTR(MIN(content), 1, 60)                                  AS topic_name,
-                SUM(num_likes + num_comments + num_shares)                   AS engagement_count,
-                SUM(CASE WHEN agent_type = 'malicious_agent'
-                          OR (is_news = 1 AND news_type = 'fake')
-                     THEN 1 ELSE 0 END)                                      AS malicious_posts,
-                SUM(CASE WHEN is_agent_response = 1
-                          OR agent_type = 'amplifier_agent'
-                     THEN 1 ELSE 0 END)                                      AS defense_posts,
-                SUM(CASE WHEN NOT (agent_type = 'malicious_agent'
-                                   OR (is_news = 1 AND news_type = 'fake'))
-                          AND NOT (is_agent_response = 1
-                                   OR agent_type = 'amplifier_agent')
-                     THEN 1 ELSE 0 END)                                      AS neutral_posts,
-                SUM(num_likes)                                               AS total_likes,
-                SUM(num_comments)                                            AS total_comments
-            FROM posts
-            WHERE status IS NULL OR status = 'active'
-            GROUP BY COALESCE(original_post_id, post_id)
+                topic_id,
+                SUBSTR(MIN(COALESCE(topic_name, '')), 1, 60) AS topic_name,
+                SUM(engagement)    AS engagement_count,
+                SUM(mal_cnt)       AS malicious_posts,
+                SUM(def_cnt)       AS defense_posts,
+                SUM(neu_cnt)       AS neutral_posts,
+                SUM(likes)         AS total_likes,
+                SUM(coms)          AS total_comments
+            FROM (
+                -- Posts
+                SELECT
+                    COALESCE(p.original_post_id, p.post_id)     AS topic_id,
+                    p.content                                    AS topic_name,
+                    p.num_likes + p.num_comments + p.num_shares  AS engagement,
+                    CASE WHEN {_MAL_PERSONA}
+                              OR p.agent_type = 'malicious_agent'
+                              OR (p.is_news = 1 AND p.news_type = 'fake')
+                         THEN 1 ELSE 0 END                       AS mal_cnt,
+                    CASE WHEN {_DEF_PERSONA}
+                              OR p.agent_type = 'amplifier_agent'
+                              OR COALESCE(p.is_agent_response, 0) = 1
+                         THEN 1 ELSE 0 END                       AS def_cnt,
+                    CASE WHEN NOT ({_MAL_PERSONA}
+                                   OR p.agent_type = 'malicious_agent'
+                                   OR (p.is_news = 1 AND p.news_type = 'fake'))
+                          AND NOT ({_DEF_PERSONA}
+                                   OR p.agent_type = 'amplifier_agent'
+                                   OR COALESCE(p.is_agent_response, 0) = 1)
+                         THEN 1 ELSE 0 END                       AS neu_cnt,
+                    p.num_likes                                  AS likes,
+                    p.num_comments                               AS coms
+                FROM posts p
+                LEFT JOIN users u ON p.author_id = u.user_id
+                WHERE p.status IS NULL OR p.status = 'active'
+
+                UNION ALL
+
+                -- Comments from defense agents (amplifier agents reply as comments, not posts)
+                SELECT
+                    COALESCE(pp.original_post_id, c.post_id)    AS topic_id,
+                    NULL                                         AS topic_name,
+                    c.num_likes                                  AS engagement,
+                    0                                            AS mal_cnt,
+                    CASE WHEN {_DEF_PERSONA} THEN 1 ELSE 0 END  AS def_cnt,
+                    CASE WHEN NOT {_DEF_PERSONA} THEN 1 ELSE 0 END AS neu_cnt,
+                    c.num_likes                                  AS likes,
+                    0                                            AS coms
+                FROM comments c
+                LEFT JOIN users u  ON c.author_id  = u.user_id
+                LEFT JOIN posts pp ON c.post_id     = pp.post_id
+            )
+            GROUP BY topic_id
             ORDER BY engagement_count DESC
             LIMIT ?
         """, (self.niche_tracker.top_n_topics,))
@@ -610,35 +671,29 @@ class DefenseMonitoringCenter:
         self.niche_tracker._recalculate_rankings()
 
         # --- Accounts: per user ---
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT
                 u.user_id,
                 u.total_likes_received,
                 u.total_comments_received,
                 u.follower_count,
                 CASE
-                    WHEN EXISTS (
-                        SELECT 1 FROM posts p
-                        WHERE p.author_id = u.user_id
-                          AND (p.agent_type = 'malicious_agent'
-                               OR (p.is_news = 1 AND p.news_type = 'fake'))
-                        LIMIT 1
-                    ) THEN 'malicious'
-                    WHEN EXISTS (
-                        SELECT 1 FROM posts p
-                        WHERE p.author_id = u.user_id
-                          AND (p.is_agent_response = 1 OR p.agent_type = 'amplifier_agent')
-                        LIMIT 1
-                    ) THEN 'defense'
+                    WHEN {_MAL_PERSONA} THEN 'malicious'
+                    WHEN {_DEF_PERSONA} THEN 'defense'
                     ELSE 'neutral'
                 END AS account_type,
-                COALESCE((
-                    SELECT AVG(CAST(om.extremism_level AS FLOAT)) / 4.0
-                    FROM opinion_monitoring om
-                    JOIN posts p2 ON CAST(om.post_id AS TEXT) = p2.post_id
-                    WHERE p2.author_id = u.user_id
-                ), 0.0) AS extreme_score
+                CASE
+                    WHEN {_MAL_PERSONA} THEN 0.85
+                    ELSE COALESCE((
+                        SELECT AVG(CAST(om.extremism_level AS FLOAT)) / 4.0
+                        FROM opinion_monitoring om
+                        JOIN posts p2 ON CAST(om.post_id AS TEXT) = p2.post_id
+                        WHERE p2.author_id = u.user_id
+                    ), 0.0)
+                END AS extreme_score
             FROM users u
+            WHERE u.persona NOT LIKE '%"type": "news_org"%'
+              AND u.persona NOT LIKE '%''type'': ''news_org''%'
         """)
 
         self.bias_calculator.accounts.clear()

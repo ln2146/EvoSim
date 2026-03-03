@@ -112,6 +112,9 @@ const amplifierAnchors = [
   /Activating Amplifier Agent cluster/i,
   /Start parallel execution/i,
   /Bulk like/i,
+  // Individual Amplifier agent comment lines — needed so they route back to Amplifier
+  // even when Leader is the active role during parallel Leader+Amplifier execution.
+  /^💬\s*🤖\s*Amplifier-\d+\b/i,
 ]
 
 const monitoringAnchors = [
@@ -649,7 +652,8 @@ export function routeLogLine(prev: FlowState, rawLine: string): FlowState {
   const shouldReleaseSticky = stateAfterSummary.amplifierSticky && matchesAny(cleanLine, monitoringAnchors)
   const amplifierSticky = shouldReleaseSticky ? false : stateAfterSummary.amplifierSticky
 
-  // Role switching is anchor-driven; when amplifier is sticky, we force attribution to Amplifier.
+  // Role switching is anchor-driven; when amplifier is sticky, all non-anchored lines
+  // are forced to Amplifier (sequential execution: Leader finishes before Amplifier starts).
   const anchoredRole = detectRoleByAnchor(cleanLine)
   const nextRole: Role | null = amplifierSticky ? 'Amplifier' : anchoredRole
 

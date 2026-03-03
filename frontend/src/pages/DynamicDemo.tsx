@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ElementType, type ReactNode } from 'react'
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { Activity, Play, Square, Shield, Bug, Sparkles, Flame, MessageSquare, ArrowLeft, ThumbsUp, Share2, MessageCircle, BarChart3, Eye } from 'lucide-react'
+import { Activity, Play, Square, Shield, Bug, Sparkles, Flame, MessageSquare, ArrowLeft, ThumbsUp, Share2, MessageCircle, BarChart3, Eye, RefreshCw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { createInitialFlowState, routeLogLine, stripLogPrefix, type FlowState, type Role } from '../lib/interventionFlow/logRouter'
 import { createEventSourceLogStream, createSimulatedLogStream, type LogStream } from '../lib/interventionFlow/logStream'
@@ -115,6 +115,7 @@ interface DefenseDashboard {
     malicious_leaning: number
     defense_dominant: number
     defense_leaning: number
+    neutral_dominant: number
     contested: number
     malicious_side_percentage: number
     defense_side_percentage: number
@@ -311,6 +312,7 @@ function useDynamicDemoApi() {
   return {
     data,
     isLoading,
+    leaderboardLoading,
     error,
     selectedPost,
     setSelectedPost: handleSetSelectedPost,
@@ -340,6 +342,7 @@ export default function DynamicDemo() {
   const {
     data,
     error,
+    leaderboardLoading,
     selectedPost,
     setSelectedPost,
     commentSort,
@@ -951,6 +954,8 @@ export default function DynamicDemo() {
             <HeatLeaderboardCard
               posts={data.heatPosts}
               onSelect={setSelectedPost}
+              onRefresh={refetchLeaderboard}
+              isRefreshing={leaderboardLoading}
               error={error || undefined}
             />
           ) : (
@@ -1141,10 +1146,14 @@ function DynamicDemoHeader({
 function HeatLeaderboardCard({
   posts,
   onSelect,
+  onRefresh,
+  isRefreshing,
   error
 }: {
   posts: HeatPost[]
   onSelect: (post: HeatPost) => void
+  onRefresh?: () => void
+  isRefreshing?: boolean
   error?: Error | null
 }) {
   return (
@@ -1157,6 +1166,17 @@ function HeatLeaderboardCard({
             <p className="text-sm text-slate-600">实时热度排名</p>
           </div>
         </div>
+        {onRefresh && (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            className="p-2 rounded-xl hover:bg-slate-100 transition-colors disabled:opacity-50"
+            title="刷新热度榜"
+          >
+            <RefreshCw size={16} className={`text-slate-500 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </button>
+        )}
       </div>
 
       {error && (
@@ -1442,15 +1462,17 @@ function CommentSortTabs({ value, onChange }: { value: 'likes' | 'time'; onChang
 
 function DefenseDashboardCard({ dashboard, isLive, isFetching }: { dashboard: DefenseDashboard | null; isLive: boolean; isFetching: boolean }) {
   const no = dashboard?.niche_occupancy
-  const malDom  = no?.malicious_dominant  ?? 0
-  const malLean = no?.malicious_leaning   ?? 0
-  const defDom  = no?.defense_dominant    ?? 0
-  const defLean = no?.defense_leaning     ?? 0
-  const total   = no?.total_topics        ?? 0
-  // stacked bar widths — unaccounted remainder (neutral/contested) shown as gray
-  const malW  = total > 0 ? ((malDom + malLean) / total) * 100 : 0
-  const defW  = total > 0 ? ((defDom + defLean) / total) * 100 : 0
-  const neutralW = Math.max(0, 100 - malW - defW)
+  const malDom   = no?.malicious_dominant  ?? 0
+  const malLean  = no?.malicious_leaning   ?? 0
+  const defDom   = no?.defense_dominant    ?? 0
+  const defLean  = no?.defense_leaning     ?? 0
+  const neutDom  = no?.neutral_dominant    ?? 0
+  const total    = no?.total_topics        ?? 0
+  // stacked bar widths
+  const malW     = total > 0 ? ((malDom + malLean) / total) * 100 : 0
+  const defW     = total > 0 ? ((defDom + defLean) / total) * 100 : 0
+  const neutW    = total > 0 ? (neutDom / total) * 100 : 0
+  const neutralW = Math.max(0, 100 - malW - defW - neutW)
 
   const tc = dashboard?.traffic_concentration
   const extremeCount = tc?.extreme_account_count ?? 0
@@ -1458,7 +1480,9 @@ function DefenseDashboardCard({ dashboard, isLive, isFetching }: { dashboard: De
   const totalAccounts = tc?.total_accounts ?? 0
   const gini = dashboard?.algorithmic_bias.overall_gini ?? 0
   const giniBarColor = gini < 0.3 ? 'bg-green-500' : gini < 0.6 ? 'bg-amber-500' : 'bg-red-500'
-  const concentrated = extremeCount > 0 && extremeShare > 50  // backend returns 0-100
+  const giniLabel = gini < 0.3 ? '流量分布正常' : gini < 0.6 ? '流量轻度集中' : '⚠ 流量过度集中'
+  const giniLabelColor = gini < 0.3 ? 'text-green-600' : gini < 0.6 ? 'text-amber-600' : 'text-red-600'
+  const concentrated = extremeCount > 0 && extremeShare > 50  // for extreme account line
 
   return (
     <div className="glass-card p-6 h-[300px] flex flex-col">
@@ -1482,13 +1506,19 @@ function DefenseDashboardCard({ dashboard, isLive, isFetching }: { dashboard: De
             <span className="text-sm font-medium text-slate-700">生态位占有率</span>
             <span className="text-xs text-slate-400">共 {total} 个热门话题</span>
           </div>
-          {/* count badges — two sides only */}
+          {/* count badges — three sides */}
           <div className="flex items-center justify-between mb-2">
             <span className="flex items-center gap-1 text-xs font-semibold text-red-600">
               <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
               水军主导 {malDom} 个
               {malLean > 0 && <span className="font-normal text-red-400 ml-1">+倾向 {malLean} 个</span>}
             </span>
+            {neutDom > 0 && (
+              <span className="flex items-center gap-1 text-xs font-semibold text-slate-500">
+                <span className="w-2 h-2 rounded-full bg-slate-400 inline-block" />
+                中性 {neutDom} 个
+              </span>
+            )}
             <span className="flex items-center gap-1 text-xs font-semibold text-green-600">
               EvoCorps 主导 {defDom} 个
               {defLean > 0 && <span className="font-normal text-green-400 ml-1">+倾向 {defLean} 个</span>}
@@ -1497,6 +1527,7 @@ function DefenseDashboardCard({ dashboard, isLive, isFetching }: { dashboard: De
           </div>
           <div className="h-3 w-full rounded-full overflow-hidden flex bg-slate-100">
             <div className="bg-red-500 transition-all duration-500" style={{ width: `${malW}%` }} />
+            <div className="bg-slate-300 transition-all duration-500" style={{ width: `${neutW}%` }} />
             <div className="bg-slate-200 transition-all duration-500" style={{ width: `${neutralW}%` }} />
             <div className="bg-green-500 transition-all duration-500" style={{ width: `${defW}%` }} />
           </div>
@@ -1506,14 +1537,14 @@ function DefenseDashboardCard({ dashboard, isLive, isFetching }: { dashboard: De
         <div>
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-slate-700">算法倾斜基尼系数</span>
-            <span className={['text-xs font-semibold', concentrated ? 'text-red-600' : 'text-green-600'].join(' ')}>
-              {concentrated ? '⚠ 流量过度集中' : '流量分布正常'}
+            <span className={`text-xs font-semibold ${giniLabelColor}`}>
+              {giniLabel}
             </span>
           </div>
           {/* descriptive line */}
           <div className="text-xs text-slate-600 mb-2">
             {extremeCount > 0
-              ? <>{extremeCount} 个极端账号（占总账号 {totalAccounts > 0 ? ((extremeCount / totalAccounts) * 100).toFixed(1) : '0.0'}%）占据了 <span className={concentrated ? 'font-bold text-red-600' : 'font-semibold'}>{extremeShare.toFixed(1)}%</span> 的流量</>
+              ? <>极端账号 <span className="font-semibold">{extremeCount}</span> 个</>
               : <span className="text-slate-400">暂无极端账号数据</span>
             }
           </div>

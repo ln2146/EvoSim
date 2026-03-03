@@ -316,12 +316,14 @@ class MultiModelSelector:
             )
         )
 
-        client = OpenAI(
+        client_kwargs = dict(
             api_key=OPENAI_API_KEY,
-            base_url=OPENAI_BASE_URL,
             timeout=self.request_config["timeout"],
-            http_client=http_client
+            http_client=http_client,
         )
+        if OPENAI_BASE_URL:  # only set if non-empty, otherwise SDK uses https://api.openai.com/v1
+            client_kwargs["base_url"] = OPENAI_BASE_URL
+        client = OpenAI(**client_kwargs)
 
         return client, model_name
 
