@@ -364,15 +364,19 @@ class FeedPipeline:
         ctx.candidates = self.diversity_scorer.apply_penalty(ctx.candidates)
 
         # 完整评分表（按 final_score 降序）
-        for c in sorted(ctx.candidates, key=lambda x: x.final_score, reverse=True):
+        plog.info(f"  [SCORING_DETAIL] Showing all {len(ctx.candidates)} candidates sorted by final_score:")
+        for rank, c in enumerate(sorted(ctx.candidates, key=lambda x: x.final_score, reverse=True), 1):
             src_tag = str(c.source).split('.')[-1] if '.' in str(c.source) else str(c.source)
             src_tag = src_tag[:3].upper()
-            news_tag = f"news/{c.news_type or 'N/A'}" if c.is_news else "non-news    "
+            news_tag = f"news/{c.news_type or 'N/A'}" if c.is_news else "non-news"
+            cred_tag = f"cred={c.author_influence_score:.2f}" if c.author_influence_score else "cred=N/A"
             plog.info(
-                f"  [SCORE] post={c.post_id[:8]} | "
+                f"  [SCORE] rank={rank:2d} | post={c.post_id[:8]} | "
                 f"weighted={c.weighted_score:7.2f} | "
+                f"fresh={c.freshness_score:.2f} | "
                 f"embed={c.embedding_score:.3f} | "
                 f"oon={c.oon_adjustment:.2f} | "
+                f"{cred_tag} | "
                 f"div={c.diversity_penalty:.2f} | "
                 f"final={c.final_score:7.3f} | "
                 f"{src_tag} | {news_tag}"
@@ -381,20 +385,43 @@ class FeedPipeline:
         return ctx
 
     def _stage6_selection(self, ctx: PipelineContext) -> PipelineContext:
-        """阶段6: 选择（带每个入选帖子的日志）"""
+        """阶段6: 选择（带每个入选帖子的日志和选择原因）"""
         plog = self.pipeline_log
+        before_count = len(ctx.candidates)
         ctx.candidates = self.selector.select(ctx.candidates)
+
+        # 统计各 segment 入选数量
+        segment_counts = {}
+        for c in ctx.candidates:
+            segment_counts[c.feed_segment] = segment_counts.get(c.feed_segment, 0) + 1
+
+        plog.info(f"  [SELECTION_SUMMARY] segments={dict(segment_counts)}")
 
         for rank, c in enumerate(ctx.candidates, 1):
             src_tag = str(c.source).split('.')[-1] if '.' in str(c.source) else str(c.source)
             src_tag = src_tag[:3].upper()
             news_tag = f"news/{c.news_type or 'N/A'}" if c.is_news else "non-news"
+
+            # 选择原因
+            reasons = []
+            if c.feed_segment == "primary":
+                reasons.append("high_score")
+            else:
+                reasons.append("diversity")
+            if c.is_followed_author:
+                reasons.append("followed")
+            if c.is_news:
+                reasons.append(f"type:{c.news_type or 'unknown'}")
+            reason_str = "+".join(reasons) if reasons else "default"
+
             plog.info(
                 f"  [SELECTED] rank={rank:2d} | "
                 f"post={c.post_id[:8]} | "
                 f"segment={c.feed_segment:<9} | "
                 f"score={c.final_score:7.3f} | "
-                f"{news_tag:<14} | {src_tag}"
+                f"author={c.author_id[:8]} | "
+                f"{news_tag:<14} | {src_tag} | "
+                f"reason={reason_str}"
             )
 
         return ctx
@@ -402,6 +429,7 @@ class FeedPipeline:
     def _stage7_post_selection_filter(self, ctx: PipelineContext) -> PipelineContext:
         """阶段7: 后选择过滤（带审核降级/移除日志）"""
         plog = self.pipeline_log
+        before_count = len(ctx.candidates)
         ctx.candidates = self.post_selection_filters.filter(ctx.candidates)
 
         import control_flags
@@ -414,20 +442,44 @@ class FeedPipeline:
 
             after_ids = {c.post_id for c in ctx.candidates}
 
-            # 记录被降级的帖子（分数发生变化）
+            # 记录每个帖子的审核状态
+            plog.info(f"  [MOD:CHECK] Checking {before_count} posts for moderation:")
+
+            passed_count = 0
+            degraded_count = 0
+            removed_count = 0
+
             for c in ctx.candidates:
                 old_score = before_scores.get(c.post_id, c.final_score)
                 if c.final_score < old_score - 0.001:
+                    # 被降级
+                    degraded_count += 1
                     plog.info(
                         f"  [MOD:DEGRADED] post={c.post_id[:8]} | "
                         f"factor={c.moderation_degradation_factor:.2f} | "
                         f"score {old_score:.3f}->{c.final_score:.3f} | "
                         f"label={c.moderation_label or 'none'}"
                     )
+                else:
+                    # 通过审核
+                    passed_count += 1
+                    plog.info(
+                        f"  [MOD:PASS] post={c.post_id[:8]} | "
+                        f"factor={c.moderation_degradation_factor:.2f} | "
+                        f"score={c.final_score:.3f} | "
+                        f"label={c.moderation_label or 'none'}"
+                    )
 
             # 记录被移除的帖子
             for post_id in before_ids - after_ids:
+                removed_count += 1
                 plog.info(f"  [MOD:REMOVED] post={post_id[:8]}")
+
+            # 汇总统计
+            plog.info(
+                f"  [MOD:SUMMARY] total_checked={before_count} | "
+                f"passed={passed_count} | degraded={degraded_count} | removed={removed_count}"
+            )
         else:
             plog.info("  [MOD:SKIP] moderation disabled")
 
