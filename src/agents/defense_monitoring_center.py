@@ -87,8 +87,8 @@ class NicheOccupancyTracker:
             return "malicious"
         elif dominance["defense"] > 0.5:
             return "defense"
-        elif (dominance["neutral"] > dominance["malicious"]
-              and dominance["neutral"] > dominance["defense"]):
+        elif dominance["neutral"] > 0.6:
+            # Truly quiet topic — neither side is active enough to matter
             return "neutral_dominant"
         elif dominance["malicious"] > dominance["defense"]:
             return "malicious_leaning"
@@ -592,10 +592,8 @@ class DefenseMonitoringCenter:
             " OR u.persona LIKE '%''type'': ''malicious''%')"
         )
         _DEF_PERSONA = (
-            "(u.persona LIKE '%\"type\": \"amplifier\"%'"
-            " OR u.persona LIKE '%''type'': ''amplifier''%'"
-            " OR u.persona LIKE '%\"type\": \"defense\"%'"
-            " OR u.persona LIKE '%''type'': ''defense''%')"
+            "(u.persona LIKE '%amplifier%'"
+            " OR u.persona LIKE '%defense%')"
         )
 
         # --- Topics: UNION posts + defense comments, grouped by root post ---
@@ -638,14 +636,20 @@ class DefenseMonitoringCenter:
 
                 UNION ALL
 
-                -- Comments from defense agents (amplifier agents reply as comments, not posts)
+                -- Comments (all roles: malicious, defense, neutral)
                 SELECT
                     COALESCE(pp.original_post_id, c.post_id)    AS topic_id,
                     NULL                                         AS topic_name,
                     c.num_likes                                  AS engagement,
-                    0                                            AS mal_cnt,
-                    CASE WHEN {_DEF_PERSONA} THEN 1 ELSE 0 END  AS def_cnt,
-                    CASE WHEN NOT {_DEF_PERSONA} THEN 1 ELSE 0 END AS neu_cnt,
+                    CASE WHEN {_MAL_PERSONA}
+                              OR c.agent_type = 'malicious_agent'
+                         THEN 1 ELSE 0 END                       AS mal_cnt,
+                    CASE WHEN {_DEF_PERSONA}
+                              OR c.agent_type = 'amplifier_agent'
+                         THEN 1 ELSE 0 END                       AS def_cnt,
+                    CASE WHEN NOT ({_MAL_PERSONA} OR c.agent_type = 'malicious_agent')
+                          AND NOT ({_DEF_PERSONA} OR c.agent_type = 'amplifier_agent')
+                         THEN 1 ELSE 0 END                       AS neu_cnt,
                     c.num_likes                                  AS likes,
                     0                                            AS coms
                 FROM comments c
@@ -672,7 +676,8 @@ class DefenseMonitoringCenter:
             self.niche_tracker.topics[td.topic_id] = td
         self.niche_tracker._recalculate_rankings()
 
-        # --- Accounts: per user ---
+        # --- Accounts: per user (including malicious bots from comments) ---
+        # First, get all users with their basic metrics
         cursor.execute(f"""
             SELECT
                 u.user_id,
@@ -683,32 +688,99 @@ class DefenseMonitoringCenter:
                     WHEN {_MAL_PERSONA} THEN 'malicious'
                     WHEN {_DEF_PERSONA} THEN 'defense'
                     ELSE 'neutral'
-                END AS account_type,
-                CASE
-                    WHEN {_MAL_PERSONA} THEN 0.85
-                    ELSE COALESCE((
-                        SELECT AVG(CAST(om.extremism_level AS FLOAT)) / 4.0
-                        FROM opinion_monitoring om
-                        JOIN posts p2 ON CAST(om.post_id AS TEXT) = p2.post_id
-                        WHERE p2.author_id = u.user_id
-                    ), 0.0)
-                END AS extreme_score
+                END AS account_type
             FROM users u
             WHERE u.persona NOT LIKE '%"type": "news_org"%'
               AND u.persona NOT LIKE '%''type'': ''news_org''%'
         """)
-
-        self.bias_calculator.accounts.clear()
+        
+        users_data = {}
         for row in cursor.fetchall():
+            users_data[row[0]] = {
+                'user_id': row[0] or "",
+                'total_likes': row[1] or 0,
+                'total_comments': row[2] or 0,
+                'followers': row[3] or 0,
+                'account_type': row[4] or "neutral"
+            }
+        
+        # Also include malicious bot accounts from comments table
+        # These may have been created with persona type "negative" but stored differently
+        cursor.execute("""
+            SELECT DISTINCT 
+                c.author_id,
+                SUM(c.num_likes) as total_likes,
+                COUNT(*) as total_comments
+            FROM comments c
+            WHERE c.agent_type = 'malicious'
+               OR c.author_id IN (SELECT user_id FROM users WHERE persona LIKE '%"type": "negative"%')
+               OR c.author_id IN (SELECT author_id FROM malicious_comments mc JOIN comments cc ON mc.comment_id = cc.comment_id)
+            GROUP BY c.author_id
+        """)
+        
+        malicious_commenters = {}
+        for row in cursor.fetchall():
+            author_id = row[0]
+            if author_id not in users_data:
+                users_data[author_id] = {
+                    'user_id': author_id,
+                    'total_likes': row[1] or 0,
+                    'total_comments': row[2] or 0,
+                    'followers': 0,
+                    'account_type': 'malicious'
+                }
+            else:
+                # Update existing user to malicious if they have malicious comments
+                users_data[author_id]['account_type'] = 'malicious'
+                # Also update engagement from comments if not already tracked
+                if users_data[author_id]['total_likes'] == 0:
+                    users_data[author_id]['total_likes'] = row[1] or 0
+                if users_data[author_id]['total_comments'] == 0:
+                    users_data[author_id]['total_comments'] = row[2] or 0
+        
+        # Get engagement from posts for all users
+        cursor.execute("""
+            SELECT author_id, SUM(num_likes) as post_likes, COUNT(*) as post_count
+            FROM posts
+            WHERE (status IS NULL OR status = 'active')
+            GROUP BY author_id
+        """)
+        
+        for row in cursor.fetchall():
+            author_id = row[0]
+            if author_id in users_data:
+                users_data[author_id]['total_likes'] = (users_data[author_id]['total_likes'] or 0) + (row[1] or 0)
+        
+        # Get extreme scores from opinion_monitoring for non-malicious users
+        cursor.execute("""
+            SELECT p2.author_id, AVG(CAST(om.extremism_level AS FLOAT)) / 4.0 as avg_extreme
+            FROM opinion_monitoring om
+            JOIN posts p2 ON CAST(om.post_id AS TEXT) = p2.post_id
+            GROUP BY p2.author_id
+        """)
+        
+        extreme_scores = {}
+        for row in cursor.fetchall():
+            extreme_scores[row[0]] = row[1]
+        
+        # Clear and rebuild accounts
+        self.bias_calculator.accounts.clear()
+        for user_id, data in users_data.items():
+            # Determine extreme score
+            if data['account_type'] == 'malicious':
+                extreme_score = 0.85  # Malicious bots are always extreme
+            else:
+                extreme_score = extreme_scores.get(user_id, 0.0)
+            
             am = AccountMetrics(
-                account_id=row[0] or "",
-                account_type=row[4] or "neutral",
-                followers=row[3] or 0,
-                total_likes=row[1] or 0,
-                total_comments=row[2] or 0,
+                account_id=data['user_id'],
+                account_type=data['account_type'],
+                followers=data['followers'],
+                total_likes=data['total_likes'],
+                total_comments=data['total_comments'],
                 total_posts=0,
                 engagement_rate=0.0,
-                extreme_score=min(1.0, max(0.0, row[5] or 0.0)),
+                extreme_score=min(1.0, max(0.0, extreme_score)),
             )
             self.bias_calculator.accounts[am.account_id] = am
 

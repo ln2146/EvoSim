@@ -4346,6 +4346,11 @@ def event_stream():
                     # 客户端断开连接
                     print('✅ SSE 客户端断开连接，清理资源')
                     break
+                except sqlite3.OperationalError as e:
+                    # 表尚未创建（数据库正在初始化），静默等待
+                    calculator = None
+                    time.sleep(2)
+                    continue
                 except Exception as e:
                     # 发生错误，记录日志后等待重试（保持连接）
                     import traceback

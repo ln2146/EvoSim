@@ -3346,7 +3346,8 @@ CRITICAL REQUIREMENTS
                     "response_content": content,
                     "timing_delay": timing_delay,
                     "timestamp": datetime.now(),
-                    "selected_model": self.selected_model  # Add model info
+                    "selected_model": self.selected_model,  # Add model info
+                    "agent_role": getattr(self, "assigned_role", ""),
                 },
                 "persona_used": self.persona_name,
                 "selected_model": self.selected_model  # Add model info
@@ -5166,9 +5167,12 @@ class SimpleCoordinationSystem:
                     comment_id = response_data.get("comment_id", f"amplifier-{i+1}")
                     persona_id = response_data.get("persona_id", f"persona-{i+1}")
                     selected_model = response_data.get("selected_model", "unknown")
+                    agent_role = response_data.get("agent_role", "")
+                    role_tag = f" [{agent_role}]" if agent_role else ""
 
-                    # Highlighted amplifier agent content display
-                    workflow_logger.info(f"💬 🤖 amplifier-{i+1} ({persona_id}) ({selected_model}) commented: {response_content}")
+                    # Highlighted amplifier agent content display with role type
+                    role_display = f"【{agent_role}】" if agent_role else ""
+                    workflow_logger.info(f"💬 🤖 amplifier-{i+1}{role_display} ({persona_id}) ({selected_model}) commented: {response_content}")
 
             # amplifier Agents like leader comments
             likes_count = 0

@@ -137,7 +137,12 @@ class HomophilyAnalysis:
         for (background_labels,) in cursor.fetchall():
             if background_labels:
                 labels = json.loads(background_labels)
-                all_attributes.update(labels.keys())
+                # Handle both dict and list formats
+                if isinstance(labels, dict):
+                    all_attributes.update(labels.keys())
+                elif isinstance(labels, list):
+                    # If it's a list, use indices or skip
+                    continue
         
         # Add nodes with all attributes
         cursor.execute("SELECT user_id, background_labels FROM users")
@@ -191,7 +196,10 @@ class HomophilyAnalysis:
         for (background_labels,) in cursor.fetchall():
             if background_labels:
                 labels = json.loads(background_labels)
-                all_attributes.update(labels.keys())
+                # Handle both dict and list formats
+                if isinstance(labels, dict):
+                    all_attributes.update(labels.keys())
+                # Skip list format
         
         # Create a visualization for each attribute
         for attribute in all_attributes:

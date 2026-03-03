@@ -47,6 +47,9 @@ function maxDuringLines(role: Role) {
     case 'Leader':
       // Leader needs to show full evidence + candidate blocks (can be >10 lines).
       return 40
+    case 'Amplifier':
+      // Amplifier cluster can have 12+ agents; keep all comment lines for per-troop filtering.
+      return 60
     default:
       return MAX_DURING_LINES_DEFAULT
   }
@@ -59,6 +62,9 @@ function maxAfterLines(role: Role) {
     case 'Leader':
       // Preserve the full evidence + candidate set for review after switching tabs.
       return 40
+    case 'Amplifier':
+      // Preserve all agent comment lines so per-troop filter works after the round ends.
+      return 60
     default:
       return MAX_AFTER_LINES_DEFAULT
   }
@@ -229,8 +235,9 @@ function applyStageUpdateForRole(prevRoles: FlowState['roles'], role: Role, clea
   // (Persistent info is rendered via summary/context, not this buffer.)
   // Strategist/Leader panels benefit from keeping earlier context (candidate strategies / evidence / candidates)
   // across stage transitions.
+  // Amplifier keeps all comment lines across stages so per-troop filtering remains usable.
   // Other roles keep stage-only stream for readability.
-  const shouldResetDuring = cur.stage.current !== nextStage.current && role !== 'Strategist' && role !== 'Leader' && role !== 'Analyst'
+  const shouldResetDuring = cur.stage.current !== nextStage.current && role !== 'Strategist' && role !== 'Leader' && role !== 'Analyst' && role !== 'Amplifier'
   return {
     ...prevRoles,
     [role]: { ...cur, stage: nextStage, during: shouldResetDuring ? [] : cur.during },
@@ -433,9 +440,12 @@ function compressDisplayLine(cleanLine: string) {
   // ->"💬 🤖 Amplifier-3 (positive_john_133) commented: ..."
   if (/^💬\s*🤖\s*Amplifier-\d+\b/i.test(trimmed) && /\bcommented:/i.test(trimmed)) {
     const normalized = trimmed.replace(/^💬\s*🤖\s*Amplifier-(\d+)\b/i, '💬 🤖 Amplifier-$1')
+    // 兼容两种格式：
+    //   旧：Amplifier-N (persona) (model) commented:
+    //   新：Amplifier-N【role】 (persona) (model) commented:
     const withoutModel = normalized.replace(
-      /^(💬\s*🤖\s*Amplifier-\d+\s+\([^)]*\))\s+\([^)]*\)\s+commented:/i,
-      '$1 commented:',
+      /^(💬\s*🤖\s*Amplifier-\d+(?:【[^】]*】)?)\s+(\([^)]*\))\s+\([^)]*\)\s+commented:/i,
+      '$1 $2 commented:',
     )
     return withoutModel
   }

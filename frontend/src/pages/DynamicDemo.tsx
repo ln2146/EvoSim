@@ -1633,17 +1633,123 @@ function MetricsLineChartCard({ data }: { data: MetricsPoint[] }) {
   )
 }
 
+// Lines stored in `during`/`after` are processed by compressDisplayLine() in logRouter.ts,
+// which converts key events into Chinese milestone strings via toUserMilestone():
+//   "Activating Amplifier Agent cluster"  → "扩散者：启动集群"
+//   "Amplifier plan: total=N"             → "扩散者：集群规模（N）"
+//   "N amplifier responses generated"     → "扩散者：生成回应（N）"
+//   "💖 N amplifier Agents liked..."      → "扩散者：点赞扩散（N）"
+// Other lines stay in English (possibly normalized).
+// Patterns must match BOTH the Chinese milestone form AND the English fallback form.
+
+// 后端角色类型到前端兵种的映射
+// 后端角色：balanced_moderates, technical_experts, community_voices, fact_checkers
+// 前端兵种：empath (同理心安抚者), factchecker (逻辑辟谣者), amplifier (意见领袖护盘者), nichefiller (生态位填补者)
+const BACKEND_ROLE_TO_TROOP: Record<string, string> = {
+  'balanced_moderates': 'empath',      // 平衡温和派 -> 同理心安抚者
+  'technical_experts': 'factchecker',  // 技术专家 -> 逻辑辟谣者
+  'community_voices': 'amplifier',     // 社区声音 -> 意见领袖护盘者
+  'fact_checkers': 'factchecker',      // 事实核查者 -> 逻辑辟谣者
+  'empath': 'empath',                  // 直接映射
+  'fact_checker': 'factchecker',       // 后端下划线格式直接映射
+  'factchecker': 'factchecker',        // 直接映射
+  'amplifier': 'amplifier',            // 直接映射
+  'niche_filler': 'nichefiller',       // 后端下划线格式直接映射
+  'nichefiller': 'nichefiller',        // 直接映射
+  'general': 'empath',                 // 通用角色默认为同理心安抚者
+}
+
+// 从日志中提取【角色类型】标注
+// 新格式：💬 🤖 amplifier-1【balanced_moderates】(persona_id) (model) commented: ...
+function extractRoleFromLogLine(line: string): string | null {
+  // 匹配【角色类型】格式
+  const roleMatch = line.match(/【([^】]+)】/)
+  if (roleMatch) {
+    return roleMatch[1].toLowerCase()
+  }
+  return null
+}
+
+// 生态位填补者 (Niche Fillers): 监测"封号真空期"，迅速抛出温和的替代性议题
+// 匹配：集群启动、规模规划、代理创建
+const _TROOP_NICHEFILLER =
+  /扩散者：启动集群|扩散者：集群规模|Successfully created.*Amplifier|Activating.*Amplifier.*cluster/i
+
+// 同理心安抚者 (Empaths): 降低社区愤怒值，提供情绪价值
+// 匹配：并行执行、生成回应、代理评论（温和、安抚类内容）
+const _TROOP_EMPATH =
+  /扩散者：并行执行|扩散者：生成回应|Amplifier.*commented|amplifier responses generated/i
+
+// 逻辑辟谣者 (Fact-checkers): 提供核心证据链，主要影响高认知用户
+// 匹配：执行结果（包含成功/失败统计）、事实核查相关
+const _TROOP_FACTCHECKER =
+  /扩散者：执行结果|扩散者：事实核查|扩散者：证据链|Agent results|Fact.?check|evidence/i
+
+// 意见领袖护盘者 (Amplifiers): 利用高信誉度强行阻断谣言传播链
+// 匹配：点赞扩散（利用高 follower 数量提升优质内容权重）
+const _TROOP_LEADER =
+  /扩散者：点赞扩散|liked leader comments|Workflow completed.*effectiveness/i
+
 function getAmplifierTroopLabel(line: string): { icon: string; name: string; color: string } | null {
-  if (/启动集群|集群规模/.test(line))
+  // 优先从日志中提取【角色类型】标注
+  const backendRole = extractRoleFromLogLine(line)
+  if (backendRole) {
+    const troopKey = BACKEND_ROLE_TO_TROOP[backendRole]
+    if (troopKey) {
+      switch (troopKey) {
+        case 'nichefiller':
+          return { icon: '🌱', name: '生态位填补者', color: 'text-emerald-600' }
+        case 'empath':
+          return { icon: '💗', name: '同理心安抚者', color: 'text-pink-600' }
+        case 'factchecker':
+          return { icon: '🔍', name: '逻辑辟谣者', color: 'text-blue-600' }
+        case 'amplifier':
+          return { icon: '👑', name: '意见领袖护盘者', color: 'text-amber-600' }
+      }
+    }
+  }
+  
+  // 回退到正则表达式匹配
+  if (_TROOP_NICHEFILLER.test(line))
     return { icon: '🌱', name: '生态位填补者', color: 'text-emerald-600' }
-  if (/并行执行|生成回应|执行结果/.test(line))
+  if (_TROOP_EMPATH.test(line))
     return { icon: '💗', name: '同理心安抚者', color: 'text-pink-600' }
-  if (/点赞扩散/.test(line))
+  if (_TROOP_FACTCHECKER.test(line))
+    return { icon: '🔍', name: '逻辑辟谣者', color: 'text-blue-600' }
+  if (_TROOP_LEADER.test(line))
     return { icon: '👑', name: '意见领袖护盘者', color: 'text-amber-600' }
   return null
 }
 
-function AmplifierTroopGrid({ summary, status }: { summary: string[]; status: string }) {
+function getAmplifierTroopKey(line: string): string | null {
+  // 优先从日志中提取【角色类型】标注
+  const backendRole = extractRoleFromLogLine(line)
+  if (backendRole) {
+    const troopKey = BACKEND_ROLE_TO_TROOP[backendRole]
+    if (troopKey) {
+      return troopKey
+    }
+  }
+  
+  // 回退到正则表达式匹配
+  if (_TROOP_NICHEFILLER.test(line)) return 'nichefiller'
+  if (_TROOP_EMPATH.test(line)) return 'empath'
+  if (_TROOP_FACTCHECKER.test(line)) return 'factchecker'
+  if (_TROOP_LEADER.test(line)) return 'amplifier'
+  return null
+}
+
+function AmplifierTroopGrid({
+  summary,
+  status,
+  selectedTroopKey,
+  onSelectTroopKey,
+}: {
+  summary: string[]
+  status: string
+  selectedTroopKey: string | null
+  onSelectTroopKey: (key: string | null) => void
+}) {
   const clusterCount = useMemo(() => {
     for (const line of summary) {
       const m = line.match(/集群规模[（(](\d+)[）)]/)
@@ -1675,6 +1781,7 @@ function AmplifierTroopGrid({ summary, status }: { summary: string[]; status: st
       border: 'border-pink-200/60',
       text: 'text-pink-700',
       dot: 'bg-pink-400',
+      ring: 'ring-pink-400',
       isNew: false,
     },
     {
@@ -1688,6 +1795,7 @@ function AmplifierTroopGrid({ summary, status }: { summary: string[]; status: st
       border: 'border-blue-200/60',
       text: 'text-blue-700',
       dot: 'bg-blue-400',
+      ring: 'ring-blue-400',
       isNew: false,
     },
     {
@@ -1701,6 +1809,7 @@ function AmplifierTroopGrid({ summary, status }: { summary: string[]; status: st
       border: 'border-amber-200/60',
       text: 'text-amber-700',
       dot: 'bg-amber-400',
+      ring: 'ring-amber-400',
       isNew: false,
     },
     {
@@ -1714,44 +1823,71 @@ function AmplifierTroopGrid({ summary, status }: { summary: string[]; status: st
       border: 'border-emerald-200/60',
       text: 'text-emerald-700',
       dot: 'bg-emerald-400',
+      ring: 'ring-emerald-400',
       isNew: true,
     },
   ]
 
+  const anySelected = selectedTroopKey !== null
+
   return (
     <div className="mt-3">
-      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">兵种分工</div>
-      <div className="grid grid-cols-2 gap-2">
-        {troops.map((t) => (
-          <div
-            key={t.key}
-            className={[
-              'relative rounded-xl p-2.5 border',
-              t.bg,
-              t.border,
-              t.isNew ? 'ring-1 ring-emerald-400/50' : '',
-            ].join(' ')}
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">兵种分工</div>
+        {anySelected && (
+          <button
+            type="button"
+            onClick={() => onSelectTroopKey(null)}
+            className="text-[9px] text-slate-400 hover:text-slate-600 underline transition-colors"
           >
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <span className="text-sm leading-none">{t.icon}</span>
-              <div className="flex items-baseline gap-1 min-w-0">
-                <div className={['text-[11px] font-semibold', t.text].join(' ')}>{t.name}</div>
-                <div className="text-[9px] text-slate-400 shrink-0">{t.subtitle}</div>
+            查看全部
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {troops.map((t) => {
+          const isSelected = selectedTroopKey === t.key
+          const isDimmed = anySelected && !isSelected
+          return (
+            <button
+              type="button"
+              key={t.key}
+              onClick={() => onSelectTroopKey(isSelected ? null : t.key)}
+              className={[
+                'relative rounded-xl p-2.5 border text-left transition-all cursor-pointer',
+                t.bg,
+                t.border,
+                t.isNew && !isSelected ? 'ring-1 ring-emerald-400/50' : '',
+                isSelected ? 'ring-2 ring-offset-1 ' + t.ring : '',
+                isDimmed ? 'opacity-40' : 'hover:brightness-95',
+              ].join(' ')}
+            >
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <span className="text-sm leading-none">{t.icon}</span>
+                <div className="flex items-baseline gap-1 min-w-0">
+                  <div className={['text-[11px] font-semibold', t.text].join(' ')}>{t.name}</div>
+                  <div className="text-[9px] text-slate-400 shrink-0">{t.subtitle}</div>
+                </div>
               </div>
-            </div>
-            {t.isNew && isActive ? (
-              <div className="mt-1.5 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[9px] text-emerald-600 font-medium">真空期监测中</span>
-              </div>
-            ) : isActive && clusterCount ? (
-              <div className="mt-1.5 flex items-center gap-1">
-                <span className={['w-1.5 h-1.5 rounded-full', t.dot].join(' ')} />
-                <span className={['text-[9px] font-medium', t.text].join(' ')}>{t.count} 名活跃</span>
-              </div>
-            ) : null}
-          </div>
-        ))}
+              {t.isNew && isActive ? (
+                <div className="mt-1.5 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-[9px] text-emerald-600 font-medium">真空期监测中</span>
+                </div>
+              ) : isActive && clusterCount ? (
+                <div className="mt-1.5 flex items-center gap-1">
+                  <span className={['w-1.5 h-1.5 rounded-full', t.dot].join(' ')} />
+                  <span className={['text-[9px] font-medium', t.text].join(' ')}>{t.count} 名活跃</span>
+                </div>
+              ) : null}
+              {isSelected && (
+                <div className="absolute top-1.5 right-1.5 w-3 h-3 rounded-full bg-white/80 flex items-center justify-center">
+                  <span className={['w-1.5 h-1.5 rounded-full', t.dot].join(' ')} />
+                </div>
+              )}
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -1911,6 +2047,14 @@ function RoleDetailSection({
   amplifierSummary: string[]
 }) {
   const displayLines = isLive ? during : (after ?? [])
+  const [selectedTroopKey, setSelectedTroopKey] = useState<string | null>(null)
+  // Reset troop filter whenever the viewed role changes
+  useEffect(() => { setSelectedTroopKey(null) }, [role])
+  const filteredDisplayLines = useMemo(() => {
+    if (role !== 'Amplifier' || !selectedTroopKey) return displayLines
+    const filtered = displayLines.filter((line) => getAmplifierTroopKey(line) === selectedTroopKey)
+    return filtered
+  }, [role, selectedTroopKey, displayLines])
   const emptyCopy = useMemo(() => getEmptyCopy({ enabled }), [enabled])
   const parsedPost = useMemo(() => {
     if (!context.postContent) return null
@@ -1987,7 +2131,12 @@ function RoleDetailSection({
       ) : null}
 
       {role === 'Amplifier' && (
-        <AmplifierTroopGrid summary={summary} status={status} />
+        <AmplifierTroopGrid
+          summary={summary}
+          status={status}
+          selectedTroopKey={selectedTroopKey}
+          onSelectTroopKey={setSelectedTroopKey}
+        />
       )}
 
       {role === 'Analyst' ? (
@@ -2045,9 +2194,17 @@ function RoleDetailSection({
 
       {role !== 'Analyst' ? (
         <div className="mt-4 bg-white/60 border border-white/40 rounded-2xl p-4 min-h-0 flex-1">
+          {role === 'Amplifier' && selectedTroopKey ? (
+            <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+              {(() => {
+                const label = { empath: '💗 同理心安抚者', factchecker: '🔍 逻辑辟谣者', amplifier: '👑 意见领袖护盘者', nichefiller: '🌱 生态位填补者' }[selectedTroopKey]
+                return `${label ?? selectedTroopKey} · 日志`
+              })()}
+            </div>
+          ) : null}
           <div className="space-y-2 h-full overflow-y-auto overflow-x-hidden pr-1">
-            {displayLines.length ? (
-              displayLines.map((line, idx) => {
+            {filteredDisplayLines.length ? (
+              filteredDisplayLines.map((line, idx) => {
                 const troop = role === 'Amplifier' ? getAmplifierTroopLabel(line) : null
                 return (
                   <div key={`${role}_${idx}`} className="flex items-start gap-1.5 text-sm leading-relaxed break-all">
@@ -2060,6 +2217,8 @@ function RoleDetailSection({
                   </div>
                 )
               })
+            ) : selectedTroopKey ? (
+              <div className="text-sm text-slate-400 italic">暂无该兵种专属日志</div>
             ) : (
               <div className="text-sm text-slate-600">{emptyCopy.stream}</div>
             )}
@@ -2263,8 +2422,9 @@ function AnalysisConfigDialog({ open, onClose, interval, onSave }: AnalysisConfi
           </div>
         </div>
         <div className="flex justify-end gap-3 mt-6">
-          <button className="btn-secondary" onClick={handleCancel}>取消</button>
+          <button type="button" className="btn-secondary" onClick={handleCancel}>取消</button>
           <button
+            type="button"
             className={`btn-primary ${validationError ? 'opacity-50 cursor-not-allowed' : ''}`}
             onClick={handleSave}
             disabled={!!validationError}
@@ -2314,6 +2474,7 @@ function AnalysisResultView({ status, summary }: { status: 'Idle' | 'Running' | 
 function ToggleCard({ icon: Icon, label, enabled, onToggle }: { icon: ElementType; label: string; enabled: boolean; onToggle: () => void }) {
   return (
     <button
+      type="button"
       onClick={onToggle}
       className={`flex items-center gap-3 rounded-2xl px-4 py-4 border-2 transition-all duration-300 ${enabled
         ? 'bg-gradient-to-r from-blue-500 to-green-500 text-white border-transparent shadow-lg'
