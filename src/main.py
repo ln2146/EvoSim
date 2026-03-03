@@ -193,7 +193,8 @@ def analyze_post_comments(body: PostCommentsAnalysisRequest):
         SELECT comment_id, content, author_id, created_at, num_likes
         FROM comments
         WHERE post_id = ?
-        ORDER BY created_at ASC
+        ORDER BY num_likes DESC, created_at ASC
+        LIMIT 30
         """,
         (post_id,),
     )
@@ -246,10 +247,11 @@ def analyze_post_comments(body: PostCommentsAnalysisRequest):
 
     # 3) 直接用 requests 调用 AIHUBMIX（与 curl 完全一致）
     try:
+        base_url = OPENAI_BASE_URL.rstrip("/") if OPENAI_BASE_URL else "https://api.openai.com/v1"
         response = requests.post(
-            url="https://aihubmix.com/v1/chat/completions",
+            url=f"{base_url}/chat/completions",
             headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",  # AIHUBMIX key
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
                 "Content-Type": "application/json",
             },
             data=json.dumps({
@@ -260,8 +262,9 @@ def analyze_post_comments(body: PostCommentsAnalysisRequest):
                 ],
                 "max_tokens": 600,
                 "temperature": 0.5,
+                "response_format": {"type": "json_object"},
             }),
-            timeout=60,
+            timeout=120,
         )
 
         if response.status_code != 200:
@@ -289,14 +292,29 @@ def analyze_post_comments(body: PostCommentsAnalysisRequest):
         else:
             try:
                 analysis_data = json.loads(raw_content)
-            except Exception as e:
-                analysis_data = {
-                    "sentiment_score_overall": None,
-                    "extremeness_score_overall": None,
-                    "summary": None,
-                    "error": f"json_parse_failed: {e}",
-                    "raw_text": raw_content,
-                }
+            except Exception:
+                # 兜底：从 markdown 代码块或裸文本中提取 JSON
+                import re
+                m = re.search(r'\{.*\}', raw_content, re.DOTALL)
+                if m:
+                    try:
+                        analysis_data = json.loads(m.group())
+                    except Exception as e2:
+                        analysis_data = {
+                            "sentiment_score_overall": None,
+                            "extremeness_score_overall": None,
+                            "summary": None,
+                            "error": f"json_parse_failed: {e2}",
+                            "raw_text": raw_content,
+                        }
+                else:
+                    analysis_data = {
+                        "sentiment_score_overall": None,
+                        "extremeness_score_overall": None,
+                        "summary": None,
+                        "error": "no_json_in_response",
+                        "raw_text": raw_content,
+                    }
 
     except Exception as e:
         logging.error(f"Post comments analysis failed for {post_id}: {e}")
