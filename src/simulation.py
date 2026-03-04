@@ -50,7 +50,10 @@ class Simulation:
         self.fake_news_injection_timesteps = {}
 
         # Initialize database manager
-        self.db_manager = DatabaseManager('database/simulation.db', self.reset_db)
+        # Use path relative to project root (parent of src/)
+        project_root = os.path.dirname(os.path.dirname(__file__))
+        db_path = os.path.join(project_root, 'database', 'simulation.db')
+        self.db_manager = DatabaseManager(db_path, self.reset_db)
         self.conn = self.db_manager.get_connection()
         self.db_path = self.db_manager.db_path
 
@@ -893,7 +896,12 @@ class Simulation:
         """Async user reaction handler"""
         try:
             # User reacts to their feed — even in fact-check mode, show the full feed (including user posts)
-            feed = user.get_feed(experiment_config=self.config, time_step=step)
+            # 使用 asyncio.to_thread 包装同步调用，避免阻塞事件循环
+            feed = await asyncio.to_thread(
+                user.get_feed,
+                experiment_config=self.config,
+                time_step=step
+            )
 
             # 真相拼接机制：到达规定时间步后无条件执行，不受 aftercare_enabled 控制
             if step >= 4 and self.news_manager:
