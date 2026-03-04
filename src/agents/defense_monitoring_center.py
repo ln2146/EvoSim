@@ -619,6 +619,7 @@ class DefenseMonitoringCenter:
                          THEN 1 ELSE 0 END                       AS mal_cnt,
                     CASE WHEN {_DEF_PERSONA}
                               OR p.agent_type = 'amplifier_agent'
+                              OR p.agent_type = 'leader_agent'
                               OR COALESCE(p.is_agent_response, 0) = 1
                          THEN 1 ELSE 0 END                       AS def_cnt,
                     CASE WHEN NOT ({_MAL_PERSONA}
@@ -646,9 +647,10 @@ class DefenseMonitoringCenter:
                          THEN 1 ELSE 0 END                       AS mal_cnt,
                     CASE WHEN {_DEF_PERSONA}
                               OR c.agent_type = 'amplifier_agent'
+                              OR c.agent_type = 'leader_agent'
                          THEN 1 ELSE 0 END                       AS def_cnt,
                     CASE WHEN NOT ({_MAL_PERSONA} OR c.agent_type = 'malicious_agent')
-                          AND NOT ({_DEF_PERSONA} OR c.agent_type = 'amplifier_agent')
+                          AND NOT ({_DEF_PERSONA} OR c.agent_type = 'amplifier_agent' OR c.agent_type = 'leader_agent')
                          THEN 1 ELSE 0 END                       AS neu_cnt,
                     c.num_likes                                  AS likes,
                     0                                            AS coms

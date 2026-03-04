@@ -1690,6 +1690,20 @@ const _TROOP_FACTCHECKER =
 const _TROOP_LEADER =
   /扩散者：点赞扩散|liked leader comments|Workflow completed.*effectiveness/i
 
+const TROOP_STAGES: Record<string, readonly [string, string, string]> = {
+  empath:      ['情绪感知', '共情策略', '发布安抚'],
+  factchecker: ['声明识别', '组织论据', '发布辟谣'],
+  amplifier:   ['影响力评估', '确立立场', '发布评论'],
+  nichefiller: ['空位检测', '设计议题', '发布引导'],
+}
+
+function getTroopStageProgress(filteredLines: string[]): number {
+  if (filteredLines.some((l) => /^💬\s*🤖\s*amplifier-\d+\b/i.test(l))) return 2
+  if (filteredLines.some((l) => /^🎯\s*amplifier-\d+\b/i.test(l))) return 1
+  if (filteredLines.some((l) => /^🔍\s*amplifier-\d+\b/i.test(l))) return 0
+  return -1
+}
+
 function getAmplifierTroopLabel(line: string): { icon: string; name: string; color: string } | null {
   // 优先从日志中提取【角色类型】标注
   const backendRole = extractRoleFromLogLine(line)
@@ -1844,7 +1858,7 @@ function AmplifierTroopGrid({
           </button>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         {troops.map((t) => {
           const isSelected = selectedTroopKey === t.key
           const isDimmed = anySelected && !isSelected
@@ -1862,12 +1876,9 @@ function AmplifierTroopGrid({
                 isDimmed ? 'opacity-40' : 'hover:brightness-95',
               ].join(' ')}
             >
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <span className="text-sm leading-none">{t.icon}</span>
-                <div className="flex items-baseline gap-1 min-w-0">
-                  <div className={['text-[11px] font-semibold', t.text].join(' ')}>{t.name}</div>
-                  <div className="text-[9px] text-slate-400 shrink-0">{t.subtitle}</div>
-                </div>
+              <div className="flex flex-col items-center gap-1 text-center">
+                <span className="text-base leading-none">{t.icon}</span>
+                <div className={['text-[11px] font-semibold', t.text].join(' ')}>{t.name}</div>
               </div>
               {t.isNew && isActive ? (
                 <div className="mt-1.5 flex items-center gap-1">
@@ -2195,10 +2206,50 @@ function RoleDetailSection({
       {role !== 'Analyst' ? (
         <div className="mt-4 bg-white/60 border border-white/40 rounded-2xl p-4 min-h-0 flex-1">
           {role === 'Amplifier' && selectedTroopKey ? (
-            <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+            <div className="mb-3">
+              <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                {(() => {
+                  const label = { empath: '💗 同理心安抚者', factchecker: '🔍 逻辑辟谣者', amplifier: '👑 意见领袖护盘者', nichefiller: '🌱 生态位填补者' }[selectedTroopKey]
+                  return `${label ?? selectedTroopKey} · 工作流`
+                })()}
+              </div>
               {(() => {
-                const label = { empath: '💗 同理心安抚者', factchecker: '🔍 逻辑辟谣者', amplifier: '👑 意见领袖护盘者', nichefiller: '🌱 生态位填补者' }[selectedTroopKey]
-                return `${label ?? selectedTroopKey} · 日志`
+                const stages = TROOP_STAGES[selectedTroopKey]
+                const currentStage = getTroopStageProgress(filteredDisplayLines)
+                if (!stages || currentStage < 0) return null
+                return (
+                  <div className="flex items-start mb-3">
+                    {stages.map((stageLabel, idx) => {
+                      const isDone = idx < currentStage
+                      const isCurrent = idx === currentStage
+                      const isLast = idx === stages.length - 1
+                      return (
+                        <div key={idx} className="flex items-center flex-1">
+                          {idx > 0 && (
+                            <div className={['h-px flex-1', idx <= currentStage ? 'bg-emerald-300' : 'bg-slate-200'].join(' ')} />
+                          )}
+                          <div className="flex flex-col items-center gap-0.5 shrink-0">
+                            <div className={[
+                              'w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold',
+                              isDone ? 'bg-emerald-300 text-white' : isCurrent ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-400',
+                            ].join(' ')}>
+                              {isDone ? '✓' : idx + 1}
+                            </div>
+                            <span className={[
+                              'text-[9px] font-medium text-center leading-tight max-w-[56px]',
+                              isCurrent ? 'text-emerald-700 font-semibold' : isDone ? 'text-slate-500' : 'text-slate-300',
+                            ].join(' ')}>
+                              {stageLabel}
+                            </span>
+                          </div>
+                          {!isLast && (
+                            <div className={['h-px flex-1', idx < currentStage ? 'bg-emerald-300' : 'bg-slate-200'].join(' ')} />
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
               })()}
             </div>
           ) : null}
@@ -2206,6 +2257,44 @@ function RoleDetailSection({
             {filteredDisplayLines.length ? (
               filteredDisplayLines.map((line, idx) => {
                 const troop = role === 'Amplifier' ? getAmplifierTroopLabel(line) : null
+                const isAnalysisLine = role === 'Amplifier' && /^🔍\s*amplifier-\d+\b/i.test(line)
+                const isDecisionLine = role === 'Amplifier' && /^🎯\s*amplifier-\d+\b/i.test(line)
+                const isCommentLine  = role === 'Amplifier' && /^💬\s*🤖\s*amplifier-\d+\b/i.test(line)
+
+                if (isAnalysisLine) {
+                  return (
+                    <div key={`${role}_${idx}`} className="flex items-start gap-1.5 leading-relaxed break-all">
+                      <span className="text-[9px] font-bold shrink-0 mt-0.5 px-1.5 py-0.5 rounded bg-sky-50 text-sky-400 whitespace-nowrap">分析</span>
+                      <span className="text-slate-400 text-[11px]">{line}</span>
+                    </div>
+                  )
+                }
+
+                if (isDecisionLine) {
+                  return (
+                    <div key={`${role}_${idx}`} className="flex items-start gap-1.5 leading-relaxed break-all">
+                      <span className="text-[9px] font-bold shrink-0 mt-0.5 px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 whitespace-nowrap">决策</span>
+                      <span className="text-slate-400 text-[11px]">{line}</span>
+                    </div>
+                  )
+                }
+
+                if (isCommentLine) {
+                  const publishBg: Record<string, string> = {
+                    'text-pink-600': 'bg-pink-100',
+                    'text-blue-600': 'bg-blue-100',
+                    'text-amber-600': 'bg-amber-100',
+                    'text-emerald-600': 'bg-emerald-100',
+                  }
+                  const bgClass = troop ? (publishBg[troop.color] ?? 'bg-slate-100') : 'bg-slate-100'
+                  return (
+                    <div key={`${role}_${idx}`} className="flex items-start gap-1.5 text-sm leading-relaxed break-all">
+                      <span className={['text-[9px] font-bold shrink-0 mt-0.5 px-1.5 py-0.5 rounded whitespace-nowrap', troop ? troop.color : 'text-slate-500', bgClass].join(' ')}>发布</span>
+                      <span className="text-slate-700">{line}</span>
+                    </div>
+                  )
+                }
+
                 return (
                   <div key={`${role}_${idx}`} className="flex items-start gap-1.5 text-sm leading-relaxed break-all">
                     {troop ? (

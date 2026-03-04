@@ -1,1201 +1,1312 @@
 """
-社区发现与派系分析模块
+派系分析模块
 
-基于网络拓扑结构进行社区发现，识别信息茧房中的派系：
-- Louvain社区发现算法
-- 派系命名与分类
-- 模块度评估
-- 跨派系连接分析
+使用语义向量表示用户和内容，通过向量相似度进行社区发现和派系分析：
+- 用户行为向量（评论、点赞、分享）
+- 内容语义向量（帖子、评论文本）
+- 社交网络向量（关注关系）
+- 立场向量（支持/反对/中立）
+- 影响向量（传播路径、反应时间）
 """
 
 import sqlite3
-from typing import Dict, List, Tuple, Optional, Set
+from typing import Dict, List, Tuple, Optional, Set, Any
 from collections import defaultdict
-import networkx as nx
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 import numpy as np
+from sklearn.cluster import DBSCAN, KMeans, AgglomerativeClustering
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import StandardScaler
+import networkx as nx
 
 
 @dataclass
-class CommunityInfo:
-    """社区信息"""
+class UserVector:
+    """用户的特征向量表示"""
+    user_id: str
+    # 内容偏好向量（基于交互的帖子内容）
+    content_preference: np.ndarray
+    # 社交模式向量（基于关注网络）
+    social_pattern: np.ndarray
+    # 立场倾向向量（支持/反对/中立）
+    stance_bias: np.ndarray
+    # 活跃度向量（发帖、评论、点赞频率）
+    activity_pattern: np.ndarray
+    # 综合向量（以上所有维度的组合）
+    combined: np.ndarray
+
+    # 元数据
+    total_posts: int = 0
+    total_comments: int = 0
+    total_likes: int = 0
+    bubble_index: float = 0.5
+
+
+@dataclass
+class CommunityVector:
+    """社区的特征向量表示"""
     community_id: int
-    members: List[str]  # 成员用户ID列表
-    name: str  # 派系名称（如"吃瓜群众"、"支持者"、"反对者"）
-    size: int  # 社区大小
-    density: float  # 内部连接密度
-    avg_position: float  # 平均立场倾向 [-1, 1], -1极左, 1极右
-    key_topics: List[str]  # 主要讨论话题
-    is_echo_chamber: bool  # 是否为回声室
-    cross_community_links: int  # 跨社区连接数
+    name: str
+    members: List[str]
+    # 中心向量（所有成员向量的平均）
+    centroid: np.ndarray
+    # 内容主题向量
+    topic_vector: np.ndarray
+    # 立场倾向
+    stance_distribution: Dict[str, float] = field(default_factory=dict)
+    # 紧密度（成员间平均相似度）
+    cohesion: float = 0.0
+    # 是否为回声室
+    is_echo_chamber: bool = False
 
 
 @dataclass
-class NetworkModularity:
-    """网络模块度指标"""
-    modularity: float  # 整体模块度 [0-1]
-    num_communities: int  # 社区数量
-    avg_community_size: float  # 平均社区大小
-    max_community_size: int  # 最大社区大小
-    partition_quality: str  # 分区质量评价
-
-
-@dataclass
-class PostFactionDistribution:
-    """单个帖子的派系分布"""
+class PostStanceAnalysis:
+    """帖子的立场分析"""
     post_id: str
-    total_comments: int
-    support_count: int  # 赞成
-    neutral_count: int  # 中立
-    oppose_count: int  # 反对
+    total_interactions: int
+    # 交互用户的embedding中心
+    interaction_centroid: np.ndarray
+    # 基于语义相似度的立场分布
     support_ratio: float
     neutral_ratio: float
     oppose_ratio: float
-    top_commenters: List[Tuple[str, str]]  # (user_id, stance)
-    like_count: int = 0  # 点赞数
-    support_by_like: int = 0  # 通过点赞表达支持的人数
-    oppose_by_like: int = 0  # 通过点赞表达反对的人数（通过后续行为推断）
-
-
-@dataclass
-class UserInfluenceMetrics:
-    """用户受帖子影响的程度指标"""
-    user_id: str
-    post_id: str
-    influence_score: float  # 影响程度 [0, 1]
-    stance: str  # 'support', 'neutral', 'oppose'
-    behavior_type: str  # 'like', 'comment', 'share', 'view_only'
-    behavior_change: float  # 行为变化程度 [-1, 1], 正向表示更积极，负向表示更消极
-    bubble_index: float  # 用户的信息茧房指数
-    time_to_react: float  # 反应时间（小时），越小表示反应越快/越受影响
-
-
-@dataclass
-class FactionReport:
-    """派系分析报告"""
-    communities: List[CommunityInfo]
-    modularity: NetworkModularity
-    faction_map: Dict[str, str]  # 用户ID -> 派系名称
-    network_stats: Dict
+    # 具体评论数量
+    support_count: int = 0
+    neutral_count: int = 0
+    oppose_count: int = 0
+    # 高影响力用户列表
+    high_influence_users: List[Dict] = field(default_factory=list)
+    # 高茧房用户支持比例
+    high_bubble_support_ratio: float = 0.0
+    # 是否为最火帖子
+    is_hottest: bool = False
 
 
 class CommunityDetector:
     """社区发现与派系分析器"""
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, vector_dim: int = 128):
+        """
+        Args:
+            db_path: 数据库路径
+            vector_dim: 向量维度
+        """
         self.db_path = db_path
+        self.vector_dim = vector_dim
+        self.user_vectors: Dict[str, UserVector] = {}
+        self.scaler = StandardScaler()
 
-    def _get_connection(self):
+    def _get_connection(self) -> sqlite3.Connection:
         """获取数据库连接"""
         return sqlite3.connect(self.db_path)
 
-    def build_social_network(self) -> nx.Graph:
-        """构建社交网络图
+    # ==================== 向量生成 ====================
 
-        边的定义：
-        - 强连接：互相关注（边权重=2）
-        - 弱连接：单向关注（边权重=1）
+    def _get_text_vector(self, text: str, model_type: str = 'tfidf') -> np.ndarray:
+        """获取文本的特征向量
+
+        Args:
+            text: 输入文本
+            model_type: 'tfidf', 'bow', 'random', 'hybrid'
+
+        Returns:
+            特征向量
+        """
+        if not text or not text.strip():
+            return np.zeros(self.vector_dim)
+
+        # 简化版：使用词频和哈希映射生成向量
+        # 实际项目中应该使用预训练的模型
+
+        # 方法1：基于字符哈希的简单向量
+        text_bytes = text.encode('utf-8')
+        vector = np.zeros(self.vector_dim)
+
+        for i, byte in enumerate(text_bytes):
+            # 使用字节值和位置生成哈希
+            idx = (byte * (i + 1) * 37) % self.vector_dim
+            vector[idx] += 1.0
+
+        # 归一化
+        if np.linalg.norm(vector) > 0:
+            vector = vector / np.linalg.norm(vector)
+
+        # 方法2：加入词频特征
+        words = text.lower().split()
+        for word in words:
+            word_hash = hash(word) % self.vector_dim
+            vector[word_hash] += 0.5
+
+        # L2 归一化
+        if np.linalg.norm(vector) > 0:
+            vector = vector / np.linalg.norm(vector)
+
+        return vector
+
+    def _generate_content_preference_vector(
+        self,
+        user_id: str,
+        conn: sqlite3.Connection
+    ) -> np.ndarray:
+        """生成用户内容偏好向量
+
+        基于用户交互的帖子内容
+        """
+        cursor = conn.cursor()
+
+        # 获取用户发布的帖子
+        cursor.execute("""
+            SELECT content FROM posts
+            WHERE author_id = ?
+            LIMIT 20
+        """, (user_id,))
+        posts = [row[0] for row in cursor.fetchall()]
+
+        # 获取用户评论的帖子
+        cursor.execute("""
+            SELECT p.content FROM posts p
+            JOIN comments c ON p.post_id = c.post_id
+            WHERE c.author_id = ?
+            LIMIT 20
+        """, (user_id,))
+        commented_posts = [row[0] for row in cursor.fetchall()]
+
+        # 获取用户点赞的帖子（如果有likes表）
+        all_texts = posts + commented_posts
+
+        if not all_texts:
+            return np.zeros(self.vector_dim)
+
+        # 计算所有文本embedding的平均
+        vectors = [self._get_text_vector(text) for text in all_texts]
+        return np.mean(vectors, axis=0)
+
+    def _generate_social_pattern_vector(
+        self,
+        user_id: str,
+        conn: sqlite3.Connection
+    ) -> np.ndarray:
+        """生成社交模式 embedding
+
+        基于用户的关注网络
+        """
+        cursor = conn.cursor()
+
+        # 获取关注的人
+        cursor.execute("""
+            SELECT followed_id FROM follows
+            WHERE follower_id = ?
+            LIMIT 50
+        """, (user_id,))
+        following = [row[0] for row in cursor.fetchall()]
+
+        # 获取粉丝
+        cursor.execute("""
+            SELECT follower_id FROM follows
+            WHERE followed_id = ?
+            LIMIT 50
+        """, (user_id,))
+        followers = [row[0] for row in cursor.fetchall()]
+
+        if not following and not followers:
+            return np.zeros(self.vector_dim)
+
+        # 基于用户ID生成社交向量
+        embedding = np.zeros(self.vector_dim)
+
+        for user in following:
+            idx = hash(user) % self.vector_dim
+            embedding[idx] += 1.0
+
+        for user in followers:
+            idx = hash(user) % self.vector_dim
+            embedding[idx] += 0.5  # 粉丝权重稍低
+
+        # 归一化
+        if np.linalg.norm(embedding) > 0:
+            embedding = embedding / np.linalg.norm(embedding)
+
+        return embedding
+
+    def _generate_stance_bias_vector(
+        self,
+        user_id: str,
+        conn: sqlite3.Connection
+    ) -> np.ndarray:
+        """生成立场倾向 embedding
+
+        [支持强度, 反对强度, 中立强度, 情绪极化程度]
+        """
+        cursor = conn.cursor()
+
+        # 获取用户的所有评论
+        cursor.execute("""
+            SELECT content FROM comments
+            WHERE author_id = ?
+            LIMIT 50
+        """, (user_id,))
+        comments = [row[0] for row in cursor.fetchall()]
+
+        if not comments:
+            return np.array([0.33, 0.33, 0.34, 0.0])
+
+        # 分析每条评论的立场
+        support_count = 0
+        oppose_count = 0
+        neutral_count = 0
+        emotional_intensity = []
+
+        for comment in comments:
+            stance, intensity = self._analyze_stance_with_intensity(comment)
+            if stance == 'support':
+                support_count += 1
+            elif stance == 'oppose':
+                oppose_count += 1
+            else:
+                neutral_count += 1
+            emotional_intensity.append(intensity)
+
+        total = len(comments)
+        stance_vector = np.array([
+            support_count / total,
+            oppose_count / total,
+            neutral_count / total,
+            np.mean(emotional_intensity) if emotional_intensity else 0
+        ])
+
+        return stance_vector
+
+    def _generate_activity_pattern_vector(
+        self,
+        user_id: str,
+        conn: sqlite3.Connection
+    ) -> np.ndarray:
+        """生成活跃度模式 embedding
+
+        [发帖频率, 评论频率, 点赞频率, 时段偏好]
+        """
+        cursor = conn.cursor()
+
+        # 统计活动
+        cursor.execute("""
+            SELECT
+                COUNT(DISTINCT p.post_id) as post_count,
+                COUNT(DISTINCT c.comment_id) as comment_count
+            FROM users u
+            LEFT JOIN posts p ON u.user_id = p.author_id
+            LEFT JOIN comments c ON u.user_id = c.author_id
+            WHERE u.user_id = ?
+        """, (user_id,))
+        result = cursor.fetchone()
+        post_count = result[0] if result else 0
+        comment_count = result[1] if result else 0
+
+        # 估算点赞数（从帖子表）
+        cursor.execute("""
+            SELECT SUM(num_likes) FROM posts
+            WHERE author_id = ?
+        """, (user_id,))
+        received_likes = cursor.fetchone()[0] or 0
+
+        # 归一化到 [0, 1]
+        activity_vector = np.array([
+            min(post_count / 100.0, 1.0),
+            min(comment_count / 500.0, 1.0),
+            min(received_likes / 1000.0, 1.0),
+            0.5  # 时段偏好（可以进一步细化）
+        ])
+
+        return activity_vector
+
+    def _generate_user_vector(
+        self,
+        user_id: str,
+        conn: sqlite3.Connection
+    ) -> UserVector:
+        """生成用户的综合 embedding
+
+        组合内容偏好、社交模式、立场倾向、活跃度四个维度
+        """
+        # 生成各维度向量
+        content_pref = self._generate_content_preference_vector(user_id, conn)
+        social_pattern = self._generate_social_pattern_vector(user_id, conn)
+        stance_bias = self._generate_stance_bias_vector(user_id, conn)
+        activity_pattern = self._generate_activity_pattern_vector(user_id, conn)
+
+        # 拼接成综合向量
+        combined = np.concatenate([
+            content_pref,
+            social_pattern,
+            stance_bias,
+            activity_pattern
+        ])
+
+        # 确保维度正确
+        if len(combined) < self.vector_dim:
+            # 填充到指定维度
+            combined = np.pad(combined, (0, self.vector_dim - len(combined)))
+        elif len(combined) > self.vector_dim:
+            # 截断
+            combined = combined[:self.vector_dim]
+
+        # 归一化
+        if np.linalg.norm(combined) > 0:
+            combined = combined / np.linalg.norm(combined)
+
+        # 获取元数据
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                (SELECT COUNT(*) FROM posts WHERE author_id = ?) as post_count,
+                (SELECT COUNT(*) FROM comments WHERE author_id = ?) as comment_count
+        """, (user_id, user_id))
+        row = cursor.fetchone()
+        total_posts = row[0] if row else 0
+        total_comments = row[1] if row else 0
+
+        # 获取茧房指数
+        try:
+            from src.filter_bubble_analyzer import FilterBubbleAnalyzer
+            analyzer = FilterBubbleAnalyzer(self.db_path)
+            metrics = analyzer.analyze_user_bubble(user_id)
+            bubble_index = metrics.echo_chamber_index
+        except:
+            bubble_index = 0.5
+
+        return UserVector(
+            user_id=user_id,
+            content_preference=content_pref,
+            social_pattern=social_pattern,
+            stance_bias=stance_bias,
+            activity_pattern=activity_pattern,
+            combined=combined,
+            total_posts=total_posts,
+            total_comments=total_comments,
+            total_likes=0,
+            bubble_index=bubble_index
+        )
+
+    # ==================== 立场分析 ====================
+
+    def _analyze_stance_with_intensity(self, text: str) -> Tuple[str, float]:
+        """分析文本立场和情绪强度（基于EvoCorps人格数据集的多维度分析）
+
+        Returns:
+            (stance, intensity)
+            stance: 'support', 'neutral', 'oppose'
+            intensity: [0, 1] 情绪强度
+        """
+        if not text or not text.strip():
+            return 'neutral', 0.0
+
+        # ========== 关键词库（基于EvoCorps数据集分析） ==========
+
+        # 强支持关键词 (score +3)
+        strong_support = [
+            'absolutely', 'definitely', 'strongly support', 'fully support',
+            'completely agree', 'totally agree', 'essential', 'critical',
+            'crucial', 'imperative', 'unequivocally', 'without reservation',
+            'wholeheartedly', 'emphatically', '100%', 'strongly agree',
+            'firmly believe', 'no doubt', 'must', 'important'
+        ]
+
+        # 支持关键词 (score +1)
+        support = [
+            'good', 'great', 'agree', 'support', 'yes', 'right', 'correct',
+            'excellent', 'perfect', 'love it', 'like', 'approve', 'favor',
+            'positive', 'thumbs up', 'endorse', 'back', 'exactly', 'precisely',
+            'well said', 'makes sense', 'valid point', 'fair point', 'spot on',
+            'thank you', 'thanks', 'helpful', 'useful', 'insightful',
+            'appreciate', 'valuable', 'true', 'indeed'
+        ]
+
+        # 强反对关键词 (score -3)
+        strong_oppose = [
+            'strongly oppose', 'absolutely not', 'terrible', 'horrible',
+            'disgusting', 'unacceptable', 'reject', 'vehemently oppose',
+            'firmly against', 'completely disagree', 'totally disagree',
+            'no way', 'never', 'under no circumstances', 'impossible',
+            'absurd', 'ridiculous', 'preposterous', 'ludicrous',
+            # 愤怒表达（粗口）
+            'fuck', 'shit', 'bullshit', 'dammit', 'damn', 'ass'
+        ]
+
+        # 反对关键词 (score -1)
+        oppose = [
+            'disagree', 'problem', 'question', 'issue', 'concern', 'doubt',
+            'skeptical', 'suspicious', 'wary', 'hesitant', 'uncertain',
+            'unsure', 'not sure', 'bad idea', 'against', 'critical of',
+            'troubled', 'unconvinced', 'objection', 'disapprove',
+            'fail to see', 'wrong', 'not true', 'incorrect',
+            # 质疑/批评
+            'side-eye', 'scandal', 'corrupt', 'lying', 'fake',
+            'shady', 'sus', 'conspiracy', 'shut up', 'spineless'
+        ]
+
+        # 中立关键词 (score 0，但影响判定)
+        neutral = [
+            'maybe', 'possibly', 'perhaps', 'might be', 'could be',
+            'depends', 'it depends', 'not entirely sure', 'need more info',
+            'unclear', 'on the fence', 'waiting for evidence', 'interesting',
+            'thought', 'wonder', 'curious', 'interesting point'
+        ]
+
+        # ========== 语调分析 ==========
+
+        # Hostile/Aggressive语调特征 (反对倾向)
+        hostile_indicators = [
+            'hate', 'stupid', 'idiot', 'dumb', 'ignorant', 'sheep',
+            'scam', 'steal', 'stealing', 'bleed', 'suffer', 'corrupt',
+            'bullshit', 'lying', 'fake', 'shut up', 'spineless'
+        ]
+
+        # Warm/Friendly语调特征 (支持倾向)
+        warm_indicators = ['friendly', 'kind', 'respect', 'understand', 'appreciate']
+
+        # ========== 行为模式 ==========
+
+        # 建设性对话模式 (支持倾向)
+        constructive_patterns = [
+            'i understand', 'i see your point', 'that makes sense',
+            'let me understand', 'fair enough', 'good perspective',
+            'valid point', 'respect', 'constructive'
+        ]
+
+        # 讽刺挖苦模式 (反对倾向)
+        taunting_patterns = [
+            'yeah right', 'sure', 'lol', 'sarcasm', 'mock', 'ridicule',
+            'you must be joking', 'give me a break', 'whatever'
+        ]
+
+        # ========== 开始计算 ==========
+
+        text_lower = text.lower()
+
+        # 1. 关键词得分
+        score = 0
+        intensity = 0
+
+        for kw in strong_support:
+            if kw in text_lower:
+                score += 3
+                intensity += 0.3
+        for kw in support:
+            if kw in text_lower:
+                score += 1
+                intensity += 0.1
+        for kw in strong_oppose:
+            if kw in text_lower:
+                score -= 3
+                intensity += 0.3
+        for kw in oppose:
+            if kw in text_lower:
+                score -= 1
+                intensity += 0.1
+
+        # 2. 语调分析
+        tone_bonus = 0
+
+        # 检测hostile语调（粗口、敌对词汇）
+        hostile_count = 0
+        for indicator in hostile_indicators:
+            if indicator in text_lower:
+                hostile_count += text_lower.count(indicator)
+
+        if hostile_count > 0:
+            tone_bonus -= hostile_count * 0.8  # 每个敌对词汇-0.8分
+            intensity += min(hostile_count * 0.3, 0.6)  # 增加强度
+
+        # 检测warm语调
+        for indicator in warm_indicators:
+            if indicator in text_lower:
+                tone_bonus += 0.5
+
+        # 3. 行为模式分析
+        behavior_bonus = 0
+
+        # 建设性对话
+        for pattern in constructive_patterns:
+            if pattern in text_lower:
+                behavior_bonus += 2
+                intensity += 0.2
+
+        # 讽刺挖苦
+        for pattern in taunting_patterns:
+            if pattern in text_lower:
+                behavior_bonus -= 2
+                intensity += 0.3
+
+        # 4. 情绪强度计算（标点符号密度）
+        punctuation_count = text.count('!') + text.count('?')
+        word_count = len(text.split())
+        if word_count > 0:
+            punctuation_density = punctuation_count / word_count
+            intensity += min(punctuation_density * 0.5, 0.4)
+
+        # 全大写检测（表示强烈情绪）
+        is_all_caps = text.isupper() and len(text) > 3
+        if is_all_caps:
+            intensity += 0.5
+            # 如果全大写且有粗口，强烈倾向于oppose
+            if hostile_count > 0:
+                tone_bonus -= 2.0
+
+        # 5. 愤怒质问模式（全大写 + 多个!? + 粗口）
+        has_angry_rant = (
+            is_all_caps and
+            punctuation_count > 3 and
+            hostile_count > 0
+        )
+        if has_angry_rant:
+            tone_bonus -= 3.0  # 强烈反对
+            intensity = min(intensity + 0.3, 1.0)
+
+        # ========== 综合判定 ==========
+
+        # 归一化强度
+        intensity = min(intensity, 1.0)
+
+        # 计算总分
+        total_score = score + tone_bonus + (behavior_bonus * 0.3)
+
+        # 判定阈值（调整后）
+        if total_score > 0.5:
+            return 'support', intensity
+        elif total_score < -0.3:  # 降低反对阈值，更容易识别反对
+            return 'oppose', intensity
+        else:
+            return 'neutral', intensity * 0.5
+
+    # ==================== 社区发现（基于Embedding） ====================
+
+    def detect_communities(
+        self,
+        method: str = 'dbscan',
+        n_clusters: int = 5,
+        min_samples: int = 3
+    ) -> List[CommunityVector]:
+        """基于用户 embedding 进行社区发现
+
+        Args:
+            method: 聚类方法 ('dbscan', 'kmeans', 'hierarchical')
+            n_clusters: KMeans的簇数量
+            min_samples: DBSCAN的最小样本数
+
+        Returns:
+            社区列表
         """
         conn = self._get_connection()
         cursor = conn.cursor()
-
-        G = nx.Graph()
 
         try:
             # 获取所有用户
             cursor.execute("SELECT user_id FROM users")
             users = [row[0] for row in cursor.fetchall()]
-            G.add_nodes_from(users)
 
-            # 获取关注关系（双向）
-            cursor.execute("""
-                SELECT follower_id, followed_id FROM follows
-            """)
+            if not users:
+                return []
 
-            # 记录关注关系
-            follows = defaultdict(set)
-            for follower, followed in cursor.fetchall():
-                follows[follower].add(followed)
+            # 生成所有用户的embedding
+            print(f"正在为 {len(users)} 个用户生成 embedding...")
+            user_vectors = []
+            user_ids = []
 
-            # 添加边
-            for user1 in follows:
-                for user2 in follows[user1]:
-                    # 检查是否互相关注
-                    if user2 in follows and user1 in follows[user2]:
-                        # 强连接（互粉）
-                        if G.has_edge(user1, user2):
-                            G[user1][user2]['weight'] = 2
-                        else:
-                            G.add_edge(user1, user2, weight=2)
-                    else:
-                        # 弱连接（单向）
-                        if not G.has_edge(user1, user2):
-                            G.add_edge(user1, user2, weight=1)
+            for user_id in users:
+                vector = self._generate_user_vector(user_id, conn)
+                user_vectors.append(vector)
+                user_ids.append(user_id)
+                self.user_vectors[user_id] = vector
 
-            return G
+            # 转换为矩阵
+            X = np.array([e.combined for e in user_vectors])
 
-        finally:
-            conn.close()
+            # 标准化
+            X_scaled = self.scaler.fit_transform(X)
 
-    def build_interaction_network(self, limit: int = 1000) -> nx.Graph:
-        """基于互动构建网络图
-
-        边的定义：
-        - 互动次数（评论、点赞、分享）
-        """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        G = nx.Graph()
-
-        try:
-            # 获取最近的互动
-            cursor.execute("""
-                SELECT l1.user_id as user1, l2.user_id as user2, COUNT(*) as weight
-                FROM likes l1
-                JOIN likes l2 ON l1.post_id = l2.post_id
-                WHERE l1.user_id != l2.user_id
-                GROUP BY l1.user_id, l2.user_id
-                LIMIT ?
-            """, (limit,))
-
-            for user1, user2, weight in cursor.fetchall():
-                if G.has_edge(user1, user2):
-                    G[user1][user2]['weight'] += weight
-                else:
-                    G.add_edge(user1, user2, weight=weight)
-
-            return G
-
-        finally:
-            conn.close()
-
-    def detect_communities_louvain(self, graph: nx.Graph) -> List[Set[str]]:
-        """使用Louvain算法检测社区
-
-        Returns:
-            社区列表，每个社区是一个用户ID集合
-        """
-        try:
-            import networkx.algorithms.community as nx_comm
-            # 使用Louvain算法
-            communities = nx_comm.louvain_communities(graph, weight='weight')
-            return list(communities)
-        except ImportError:
-            # 如果没有安装python-louvain，使用标签传播算法作为替代
-            return self._detect_communities_label_propagation(graph)
-
-    def _detect_communities_label_propagation(self, graph: nx.Graph) -> List[Set[str]]:
-        """标签传播算法检测社区（备用方案）"""
-        import networkx.algorithms.community as nx_comm
-        communities = nx_comm.label_propagation_communities(graph)
-        return list(communities)
-
-    def calculate_modularity(self, graph: nx.Graph, communities: List[Set[str]]) -> float:
-        """计算网络模块度
-
-        模块度衡量社区划分的质量：
-        - > 0.3: 有意义的社区结构
-        - > 0.5: 强社区结构
-        """
-        try:
-            import networkx.algorithms.community as nx_comm
-            modularity = nx_comm.modularity(graph, communities)
-            return modularity
-        except:
-            return 0.0
-
-    def name_community(self, community_members: Set[str], graph: nx.Graph) -> str:
-        """为社区命名（智能识别派系类型）"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            # 分析社区特征
-            members_list = list(community_members)
-
-            # 1. 检查社区大小
-            size = len(members_list)
-
-            # 2. 检查内部连接密度
-            if size < 2:
-                return f"独立用户-{size}人"
-
-            internal_edges = 0
-            for i, user1 in enumerate(members_list):
-                for user2 in members_list[i+1:]:
-                    if graph.has_edge(user1, user2):
-                        internal_edges += 1
-
-            max_edges = size * (size - 1) / 2
-            density = internal_edges / max_edges if max_edges > 0 else 0
-
-            # 3. 分析讨论话题
-            placeholders = ','.join(['?' for _ in members_list])
-            cursor.execute(f"""
-                SELECT DISTINCT p.news_type, COUNT(*) as count
-                FROM posts p
-                WHERE p.author_id IN ({placeholders})
-                GROUP BY p.news_type
-                ORDER BY count DESC
-                LIMIT 3
-            """, members_list)
-
-            topics = [row[0] for row in cursor.fetchall() if row[0]]
-
-            # 4. 分析情感倾向（基于评论内容）
-            cursor.execute(f"""
-                SELECT c.content
-                FROM comments c
-                WHERE c.author_id IN ({placeholders})
-                LIMIT 50
-            """, members_list)
-
-            comments = [row[0] for row in cursor.fetchall()]
-
-            # 简单情感分析（基于关键词）
-            positive_words = ['支持', '赞同', '好', '优秀', '正确', '理性']
-            negative_words = ['反对', '错误', '糟糕', '反对', '攻击', '坏']
-
-            positive_count = sum(1 for c in comments if any(w in c for w in positive_words))
-            negative_count = sum(1 for c in comments if any(w in c for w in negative_words))
-
-            # 5. 命名规则
-            if size > 50:
-                base_name = "大众群体"
-            elif size > 20:
-                base_name = "活跃社群"
-            elif size > 5:
-                base_name = "核心圈层"
+            # 聚类
+            if method == 'dbscan':
+                # DBSCAN（自动确定社区数量）
+                clusterer = DBSCAN(eps=0.5, min_samples=min_samples, metric='cosine')
+                labels = clusterer.fit_predict(X_scaled)
+            elif method == 'kmeans':
+                # K-Means（需要指定社区数量）
+                clusterer = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                labels = clusterer.fit_predict(X_scaled)
+            elif method == 'hierarchical':
+                # 层次聚类
+                clusterer = AgglomerativeClustering(
+                    n_clusters=n_clusters,
+                    metric='cosine',
+                    linkage='average'
+                )
+                labels = clusterer.fit_predict(X_scaled)
             else:
-                base_name = "小团体"
+                raise ValueError(f"未知的聚类方法: {method}")
 
-            # 根据密度和情感倾向调整
-            if density > 0.7:
-                if positive_count > negative_count * 2:
-                    return f"{base_name}-支持派"
-                elif negative_count > positive_count * 2:
-                    return f"{base_name}-反对派"
-                else:
-                    return f"{base_name}"
-            elif density < 0.3:
-                return f"吃瓜群众"
-            else:
-                if topics:
-                    return f"{base_name}-{topics[0]}"
-                else:
-                    return f"{base_name}"
+            # 组织结果
+            communities = defaultdict(list)
+            for user_id, label in zip(user_ids, labels):
+                if label >= 0:  # 忽略噪声点（DBSCAN中的-1）
+                    communities[label].append(user_id)
+
+            # 为每个社区生成embedding
+            community_list = []
+            for cluster_id, members in communities.items():
+                if len(members) < 2:  # 跳过太小社区
+                    continue
+
+                # 计算社区中心
+                member_embeddings = [self.user_vectors[m] for m in members]
+                centroid = np.mean([v.combined for v in member_embeddings], axis=0)
+
+                # 计算紧密度（成员间平均相似度）
+                similarities = cosine_similarity(
+                    [v.combined for v in member_embeddings]
+                )
+                # 取上三角矩阵的平均值（排除对角线）
+                cohesion = np.mean(np.triu(similarities, k=1))
+
+                # 分析主题和立场
+                topic_vector = self._compute_community_topic(members, conn)
+                stance_dist = self._compute_community_stance(members, conn)
+
+                # 判断是否为回声室
+                is_echo_chamber = cohesion > 0.7 and stance_dist.get('dominant', 0) > 0.8
+
+                # 命名社区
+                name = self._name_community_from_embedding(
+                    topic_vector, stance_dist, len(members)
+                )
+
+                community = CommunityVector(
+                    community_id=cluster_id,
+                    name=name,
+                    members=members,
+                    centroid=centroid,
+                    topic_vector=topic_vector,
+                    stance_distribution=stance_dist,
+                    cohesion=cohesion,
+                    is_echo_chamber=is_echo_chamber
+                )
+                community_list.append(community)
+
+            return community_list
 
         finally:
             conn.close()
 
-    def analyze_community_position(
+    def _compute_community_topic(
         self,
-        community_members: Set[str]
-    ) -> Tuple[float, List[str]]:
-        """分析社区的立场倾向和主要话题
-
-        Returns:
-            (平均立场, 主要话题列表)
-            立场范围: [-1, 1], -1表示极左/反对, 1表示极右/支持
-        """
-        conn = self._get_connection()
+        members: List[str],
+        conn: sqlite3.Connection
+    ) -> np.ndarray:
+        """计算社区的话题向量"""
         cursor = conn.cursor()
 
-        try:
-            members_list = list(community_members)
-            if not members_list:
-                return 0.0, []
+        placeholders = ','.join(['?' for _ in members])
+        cursor.execute(f"""
+            SELECT content FROM posts
+            WHERE author_id IN ({placeholders})
+            LIMIT 50
+        """, members)
 
-            placeholders = ','.join(['?' for _ in members_list])
+        texts = [row[0] for row in cursor.fetchall()]
 
-            # 获取主要话题
-            cursor.execute(f"""
-                SELECT DISTINCT news_type FROM posts
-                WHERE author_id IN ({placeholders})
-                LIMIT 10
-            """, members_list)
-            topics = [row[0] for row in cursor.fetchall() if row[0]]
+        if not texts:
+            return np.zeros(self.vector_dim)
 
-            # 简化的立场分析（基于帖子内容的情感关键词）
-            cursor.execute(f"""
-                SELECT content FROM posts
-                WHERE author_id IN ({placeholders})
-                LIMIT 100
-            """, members_list)
+        vectors = [self._get_text_vector(text) for text in texts]
+        return np.mean(vectors, axis=0)
 
-            posts = [row[0] for row in cursor.fetchall()]
-
-            # 简单的立场打分（实际项目中应该用更复杂的NLP）
-            positive_keywords = ['支持', '赞同', '优秀', '正确', '应该', '必须']
-            negative_keywords = ['反对', '错误', '糟糕', '不应该', '反对', '问题']
-
-            position_scores = []
-            for post in posts:
-                score = 0
-                for kw in positive_keywords:
-                    score += post.count(kw)
-                for kw in negative_keywords:
-                    score -= post.count(kw)
-                position_scores.append(score)
-
-            avg_position = np.mean(position_scores) if position_scores else 0.0
-
-            # 归一化到 [-1, 1]
-            if avg_position > 0:
-                avg_position = min(avg_position / 10.0, 1.0)
-            else:
-                avg_position = max(avg_position / 10.0, -1.0)
-
-            return avg_position, topics
-
-        finally:
-            conn.close()
-
-    def detect_factions(
+    def _compute_community_stance(
         self,
-        network_type: str = 'social',
-        min_community_size: int = 3
-    ) -> FactionReport:
-        """检测并分析派系
-
-        Args:
-            network_type: 网络类型 ('social'社交网络, 'interaction'互动网络)
-            min_community_size: 最小社区大小
-
-        Returns:
-            FactionReport: 派系分析报告
-        """
-        # 1. 构建网络
-        if network_type == 'social':
-            graph = self.build_social_network()
-        else:
-            graph = self.build_interaction_network()
-
-        if graph.number_of_nodes() == 0:
-            return FactionReport(
-                communities=[],
-                modularity=NetworkModularity(0, 0, 0, 0, "无数据"),
-                faction_map={},
-                network_stats={}
-            )
-
-        # 2. 检测社区
-        communities = self.detect_communities_louvain(graph)
-
-        # 3. 过滤小社区
-        communities = [c for c in communities if len(c) >= min_community_size]
-
-        # 4. 计算模块度
-        modularity_score = self.calculate_modularity(graph, communities)
-
-        # 5. 分析每个社区
-        community_infos = []
-        faction_map = {}
-
-        for idx, community in enumerate(communities):
-            # 命名社区
-            name = self.name_community(community, graph)
-
-            # 计算内部密度
-            members_list = list(community)
-            if len(members_list) >= 2:
-                internal_edges = 0
-                for i, u1 in enumerate(members_list):
-                    for u2 in members_list[i+1:]:
-                        if graph.has_edge(u1, u2):
-                            internal_edges += 1
-                max_edges = len(members_list) * (len(members_list) - 1) / 2
-                density = internal_edges / max_edges if max_edges > 0 else 0
-            else:
-                density = 0
-
-            # 分析立场和话题
-            avg_position, key_topics = self.analyze_community_position(community)
-
-            # 计算跨社区连接
-            cross_links = 0
-            for member in community:
-                for neighbor in graph.neighbors(member):
-                    if neighbor not in community:
-                        cross_links += 1
-
-            # 判断是否为回声室（高密度、低跨连接）
-            is_echo_chamber = density > 0.6 and cross_links < len(community) * 2
-
-            community_info = CommunityInfo(
-                community_id=idx,
-                members=members_list,
-                name=name,
-                size=len(community),
-                density=density,
-                avg_position=avg_position,
-                key_topics=key_topics[:5],
-                is_echo_chamber=is_echo_chamber,
-                cross_community_links=cross_links
-            )
-            community_infos.append(community_info)
-
-            # 建立用户到派系的映射
-            for member in members_list:
-                faction_map[member] = name
-
-        # 6. 计算网络统计
-        num_communities = len(communities)
-        avg_size = np.mean([len(c) for c in communities]) if communities else 0
-        max_size = max([len(c) for c in communities]) if communities else 0
-
-        modularity_obj = NetworkModularity(
-            modularity=modularity_score,
-            num_communities=num_communities,
-            avg_community_size=avg_size,
-            max_community_size=max_size,
-            partition_quality=self._evaluate_partition_quality(modularity_score)
-        )
-
-        # 7. 网络统计
-        network_stats = {
-            'total_nodes': graph.number_of_nodes(),
-            'total_edges': graph.number_of_edges(),
-            'avg_degree': np.mean([d for n, d in graph.degree()]) if graph.number_of_nodes() > 0 else 0,
-            'network_density': nx.density(graph)
-        }
-
-        return FactionReport(
-            communities=community_infos,
-            modularity=modularity_obj,
-            faction_map=faction_map,
-            network_stats=network_stats
-        )
-
-    def _evaluate_partition_quality(self, modularity: float) -> str:
-        """评估分区质量"""
-        if modularity < 0.2:
-            return "弱社区结构"
-        elif modularity < 0.4:
-            return "中等社区结构"
-        elif modularity < 0.6:
-            return "强社区结构"
-        else:
-            return "极强社区结构"
-
-    def get_cross_faction_interactions(self) -> Dict[Tuple[str, str], int]:
-        """获取跨派系互动矩阵
-
-        Returns:
-            {(派系A, 派系B): 互动次数}
-        """
-        report = self.detect_factions(network_type='interaction')
-
-        cross_interactions = defaultdict(int)
-
-        conn = self._get_connection()
+        members: List[str],
+        conn: sqlite3.Connection
+    ) -> Dict[str, float]:
+        """计算社区的立场分布"""
         cursor = conn.cursor()
 
-        try:
-            # 获取跨派系的评论互动
-            for user1, faction1 in report.faction_map.items():
-                for user2, faction2 in report.faction_map.items():
-                    if faction1 != faction2:
-                        # 检查user1是否评论过user2的帖子
-                        cursor.execute("""
-                            SELECT COUNT(*) FROM comments c
-                            JOIN posts p ON c.post_id = p.post_id
-                            WHERE c.author_id = ? AND p.author_id = ?
-                        """, (user1, user2))
+        placeholders = ','.join(['?' for _ in members])
+        cursor.execute(f"""
+            SELECT content FROM comments
+            WHERE author_id IN ({placeholders})
+            LIMIT 100
+        """, members)
 
-                        count = cursor.fetchone()[0]
-                        if count > 0:
-                            pair = tuple(sorted([faction1, faction2]))
-                            cross_interactions[pair] += count
+        comments = [row[0] for row in cursor.fetchall()]
 
-            return dict(cross_interactions)
+        if not comments:
+            return {'support': 0.33, 'neutral': 0.34, 'oppose': 0.33, 'dominant': 0}
 
-        finally:
-            conn.close()
+        stance_counts = {'support': 0, 'neutral': 0, 'oppose': 0}
 
-    def get_echo_chamber_users(self, threshold: float = 0.7) -> List[str]:
-        """获取处于回声室中的用户列表
+        for comment in comments:
+            stance, _ = self._analyze_stance_with_intensity(comment)
+            stance_counts[stance] += 1
 
-        Args:
-            threshold: 回声室判定阈值（社区密度）
+        total = sum(stance_counts.values())
+        distribution = {k: v/total for k, v in stance_counts.items()}
 
-        Returns:
-            处于回声室的用户ID列表
-        """
-        report = self.detect_factions()
+        # 计算主导立场
+        distribution['dominant'] = max(distribution['support'],
+                                       distribution['neutral'],
+                                       distribution['oppose'])
 
-        echo_users = []
-        for community in report.communities:
-            if community.is_echo_chamber:
-                echo_users.extend(community.members)
+        return distribution
 
-        return echo_users
-
-    def _analyze_comment_stance(self, content: str) -> str:
-        """分析评论的立场（优化版）
-
-        Args:
-            content: 评论内容
-
-        Returns:
-            'support'（赞成）, 'neutral'（中立）, 或 'oppose'（反对）
-        """
-        if not content or not content.strip():
-            return 'neutral'
-
-        content_lower = content.lower()
-
-        # 1. 强烈支持指标（权重2.0）
-        strong_support_keywords = [
-            # 中文
-            '支持', '赞同', '赞成', '同意', '认可', '肯定', '确实', '对的', '有道理',
-            '完全正确', '绝对正确', '必须', '一定要', '太对了', '说得好', '讲得对',
-            '非常好', '很棒', '优秀', '完美', '坚决支持', '全力支持', '强烈支持',
-            '一百个赞同', '一万个同意',
-            # 英文
-            'absolutely', 'definitely', 'completely agree', 'totally agree',
-            'strongly support', 'fully support', '100% agree', 'exactly',
-            'perfectly', 'absolutely right', 'spot on', 'you\'re right',
-            'must', 'essential', 'crucial', 'vital',
-            # Emoji
-            '👍', '👏', '🎉'
-        ]
-
-        # 2. 支持指标（权重1.0）
-        support_keywords = [
-            # 中文
-            '好', '很好', '不错', '可以', '行', '赞', '应该', '认为对', '觉得对',
-            '有道理', '说得对', '你说得对', '同意这点', '认可这点', '确实如此',
-            '是对的', '没错', '正确', '很对', '挺好', '甚好', '赞同这个', '接受',
-            '表示同意', '大力支持', '支持这个观点',
-            # 英文
-            'agree', 'support', 'good', 'great', 'excellent', 'nice', 'right',
-            'correct', 'yes', 'true', 'makes sense', 'valid point', 'well said',
-            'i agree', 'totally', 'exactly', 'absolutely', 'sure', 'okay',
-            'approve', 'endorse', 'favor', 'like', 'love', 'appreciate',
-            'thumbs up', '+1', 'well done', 'keep it up'
-        ]
-
-        # 3. 强烈反对指标（权重2.0）
-        strong_oppose_keywords = [
-            # 中文
-            '反对', '强烈反对', '坚决反对', '绝对反对', '完全不同意', '坚决不',
-            '错', '大错特错', '不可接受', '荒谬', '无稽之谈', '胡说八道', '胡说',
-            '瞎扯', '乱说', '错误', '不对劲', '有问题', '质疑', '怀疑', '不', '别',
-            '勿', '否', '差', '糟糕', '太差', '不行', '不可以', '不应该', '反对这个',
-            '拒绝',
-            # 英文
-            'strongly disagree', 'totally disagree', 'completely disagree',
-            'absolutely not', 'no way', 'never', 'oppose', 'against',
-            'wrong', 'terrible', 'horrible', 'awful', 'disgusting',
-            'reject', 'refuse', 'deny', 'impossible', 'ridiculous',
-            'nonsense', 'garbage', 'crap',
-            # Emoji
-            '❌', '👎', '👎🏻'
-        ]
-
-        # 4. 反对指标（权重1.0）
-        oppose_keywords = [
-            # 中文
-            '不同意', '不赞同', '不赞成', '觉得不对', '认为不对', '有问题',
-            '不对劲', '不太对', '感觉不对', '似乎错了', '可能错了', '怀疑',
-            '质疑这点', '不认可', '无法接受', '难以接受', '不妥', '欠妥',
-            '反驳', '反对意见', '不同意见', '保留意见', '持保留态度',
-            # 英文
-            'disagree', 'don\'t agree', 'not agree', 'wrong', 'incorrect',
-            'problem', 'issue', 'concern', 'doubt', 'suspect', 'question',
-            'skeptical', 'suspicious', 'not sure', 'not convinced',
-            'bad', 'poor', 'fail', 'failure', 'reject', 'decline',
-            'disapprove', 'against this', 'oppose this', 'no', 'not',
-            'can\'t accept', 'unacceptable'
-        ]
-
-        # 5. 中立/探讨指标（权重0.5，但会抵消部分支持/反对分数）
-        neutral_keywords = [
-            # 中文
-            '觉得', '可能', '也许', '大概', '好像', '似乎', '据说', '听说',
-            '个人认为', '个人觉得', '我的看法', '我理解', '我想', '我的观点',
-            '分析一下', '讨论一下', '探讨', '研究', '思考', '观察',
-            '如何看待', '怎么看', '怎么说', '谈谈', '聊聊', '分享',
-            # 英文
-            'maybe', 'perhaps', 'possibly', 'might', 'could', 'seems',
-            'appears', 'supposedly', 'reportedly', 'heard', 'i think',
-            'i feel', 'i believe', 'my opinion', 'my view', 'perspective',
-            'analyze', 'discuss', 'explore', 'consider', 'think about',
-            'how do you see', 'what do you think', 'thoughts', 'views',
-            'interesting', 'curious', 'wonder', 'unclear', 'not sure',
-            # 标点
-            '?', '？', '吗', '呢', '吧', '啊'
-        ]
-
-        # 计算得分（加权）
-        support_score = 0
-        oppose_score = 0
-        neutral_score = 0
-
-        # 强关键词（权重2.0）
-        for kw in strong_support_keywords:
-            if kw in content:
-                support_score += 2.0
-
-        for kw in strong_oppose_keywords:
-            if kw in content:
-                oppose_score += 2.0
-
-        # 普通关键词（权重1.0）
-        for kw in support_keywords:
-            if kw in content:
-                support_score += 1.0
-
-        for kw in oppose_keywords:
-            if kw in content:
-                oppose_score += 1.0
-
-        # 中立关键词（权重0.5）
-        for kw in neutral_keywords:
-            if kw in content:
-                neutral_score += 0.5
-
-        # 6. 基于情感符号调整
-        # 积极表情符号
-        positive_emojis = ['😊', '😄', '👍', '👏', '🎉', '💪', '👌', '✅', '✔️', '🌟']
-        for emoji in positive_emojis:
-            if emoji in content:
-                support_score += 1.5
-
-        # 消极表情符号
-        negative_emojis = ['😞', '😠', '👎', '❌', '⛔', '🚫', '💔', '😔']
-        for emoji in negative_emojis:
-            if emoji in content:
-                oppose_score += 1.5
-
-        # 7. 基于评论长度调整
-        # 简短评论（<10字符）更可能是中立或情绪化表达
-        # 中等长度（10-50字符）可能包含明确观点
-        # 长评论（>50字符）更可能是理性分析
-        length = len(content.strip())
-        if length < 10:
-            # 简短评论，降低支持/反对分数的权重
-            support_score *= 0.7
-            oppose_score *= 0.7
-            # 如果完全没有关键词，倾向于中立
-            if support_score == 0 and oppose_score == 0:
-                return 'neutral'
-        elif length > 50:
-            # 长评论，提高权重
-            support_score *= 1.2
-            oppose_score *= 1.2
-
-        # 8. 判断立场
-        # 设置阈值，需要有明显的倾向才会判定为支持或反对
-        threshold = 0.5  # 最低得分阈值
-
-        if support_score >= threshold and support_score > oppose_score * 1.2:
-            return 'support'
-        elif oppose_score >= threshold and oppose_score > support_score * 1.2:
-            return 'oppose'
-        elif neutral_score > 0 and (support_score + oppose_score) < threshold:
-            return 'neutral'
-        elif support_score == oppose_score and support_score > threshold:
-            # 支持和反对分数相等但都有，根据绝对值决定
-            if support_score > 1.0:
-                return 'neutral'  # 势均力敌算中立
-            else:
-                return 'neutral'
-        else:
-            return 'neutral'  # 默认中立
-
-    def analyze_post_factions(
+    def _name_community_from_embedding(
         self,
-        limit: int = 50,
+        topic_vector: np.ndarray,
+        stance_dist: Dict[str, float],
+        size: int
+    ) -> str:
+        """基于embedding给社区命名"""
+        # 根据大小
+        if size > 50:
+            size_label = "大众群体"
+        elif size > 20:
+            size_label = "活跃社群"
+        elif size > 5:
+            size_label = "核心圈层"
+        else:
+            size_label = "小团体"
+
+        # 根据立场
+        dominant = stance_dist.get('dominant', 0)
+        if dominant > 0.7:
+            if stance_dist['support'] > 0.7:
+                stance_label = "支持派"
+            elif stance_dist['oppose'] > 0.7:
+                stance_label = "反对派"
+            else:
+                stance_label = "中立派"
+            return f"{size_label}-{stance_label}"
+        else:
+            return size_label
+
+    # ==================== 帖子派系分析（基于Embedding） ====================
+
+    def analyze_post_stances(
+        self,
+        limit: int = 15,
         min_comments: int = 3
-    ) -> List[PostFactionDistribution]:
-        """分析每个帖子的派系分布（赞成、中立、反对）
+    ) -> List[PostStanceAnalysis]:
+        """基于embedding分析帖子的派系分布（智能选择帖子）
 
-        Args:
-            limit: 分析的最大帖子数
-            min_comments: 最少评论数，低于此数的帖子不分析
+        智能选择策略：
+        1. 选取15条帖子，涵盖支持多、中立多、反对多的不同类型
+        2. 单独标记最火帖子（按总互动数）
 
-        Returns:
-            帖子派系分布列表
+        使用交互用户的embedding相似度来判断立场
         """
         conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
-            # 获取有足够评论的帖子
+            # 获取所有有足够评论的帖子
             cursor.execute("""
-                SELECT post_id FROM posts
+                SELECT post_id, num_comments, num_likes, num_shares
+                FROM posts
                 WHERE num_comments >= ?
                 ORDER BY num_comments DESC
-                LIMIT ?
-            """, (min_comments, limit))
+            """, (min_comments,))
 
-            post_ids = [row[0] for row in cursor.fetchall()]
+            all_posts = cursor.fetchall()
 
-            results = []
+            if not all_posts:
+                return []
 
-            for post_id in post_ids:
-                # 获取该帖子的所有评论
-                cursor.execute("""
-                    SELECT comment_id, author_id, content
-                    FROM comments
-                    WHERE post_id = ?
-                    ORDER BY created_at
-                """, (post_id,))
+            # 第一步：对所有帖子进行快速立场分析
+            post_analysis_cache = {}
+            support_dominant = []
+            neutral_dominant = []
+            oppose_dominant = []
 
-                comments = cursor.fetchall()
+            for post_id, num_comments, num_likes, num_shares in all_posts:
+                result = self._analyze_single_post_stance(post_id, conn)
+                if result:
+                    post_analysis_cache[post_id] = result
+                    total_interactions = num_comments + num_likes + num_shares
+                    result.total_interactions = total_interactions
 
-                if not comments:
-                    continue
+                    # 按主导立场分类（使用相对主导，而非绝对阈值）
+                    # 策略：找到最高的比例，且该比例至少达到30%
+                    max_ratio = max(result.support_ratio, result.neutral_ratio, result.oppose_ratio)
 
-                # 分析每条评论的立场
-                stance_distribution = {'support': 0, 'neutral': 0, 'oppose': 0}
-                commenter_stances = []
+                    if max_ratio < 0.30:
+                        # 如果没有明显主导，归为中立
+                        neutral_dominant.append((post_id, result, total_interactions))
+                    elif result.support_ratio == max_ratio:
+                        support_dominant.append((post_id, result, total_interactions))
+                    elif result.oppose_ratio == max_ratio:
+                        oppose_dominant.append((post_id, result, total_interactions))
+                    else:
+                        neutral_dominant.append((post_id, result, total_interactions))
 
-                for comment_id, author_id, content in comments:
-                    stance = self._analyze_comment_stance(content)
-                    stance_distribution[stance] += 1
-                    commenter_stances.append((author_id, stance))
+            # 第二步：从每个类别中选择代表性帖子
+            selected_posts = []
 
-                total = len(comments)
-                support_ratio = stance_distribution['support'] / total
-                neutral_ratio = stance_distribution['neutral'] / total
-                oppose_ratio = stance_distribution['oppose'] / total
+            # 策略：尽量平衡选择，每类至少5条，总共15条
+            # 按互动数排序，选择每类中最火的帖子
+            support_dominant.sort(key=lambda x: x[2], reverse=True)
+            neutral_dominant.sort(key=lambda x: x[2], reverse=True)
+            oppose_dominant.sort(key=lambda x: x[2], reverse=True)
 
-                # 获取每个立场的代表性评论者
-                top_commenters = commenter_stances[:10]  # 前10个评论者
+            # 分配配额：根据各类别数量动态分配
+            total_available = len(support_dominant) + len(neutral_dominant) + len(oppose_dominant)
 
-                result = PostFactionDistribution(
-                    post_id=post_id,
-                    total_comments=total,
-                    support_count=stance_distribution['support'],
-                    neutral_count=stance_distribution['neutral'],
-                    oppose_count=stance_distribution['oppose'],
-                    support_ratio=support_ratio,
-                    neutral_ratio=neutral_ratio,
-                    oppose_ratio=oppose_ratio,
-                    top_commenters=top_commenters
+            if total_available <= limit:
+                # 如果总帖子数不足limit，全部返回
+                for post_id, result, _ in support_dominant + neutral_dominant + oppose_dominant:
+                    selected_posts.append(result)
+            else:
+                # 智能分配配额：确保每类至少5条，且按实际数量比例分配
+                def allocate_quota(support_count, neutral_count, oppose_count, total_limit):
+                    """智能分配每类别的帖子配额，确保涵盖所有立场类型"""
+                    # 基础配额：每类至少5条（15条/3类）
+                    base_quota = 5
+                    remaining = total_limit - (base_quota * 3)
+
+                    if remaining <= 0:
+                        return (min(support_count, base_quota),
+                                min(neutral_count, base_quota),
+                                min(oppose_count, base_quota))
+
+                    # 剩余配额按比例分配
+                    total = support_count + neutral_count + oppose_count
+                    support_extra = int((support_count / total) * remaining)
+                    neutral_extra = int((neutral_count / total) * remaining)
+                    oppose_extra = remaining - support_extra - neutral_extra  # 确保总和正确
+
+                    return (
+                        min(support_count, base_quota + support_extra),
+                        min(neutral_count, base_quota + neutral_extra),
+                        min(oppose_count, base_quota + oppose_extra)
+                    )
+
+                support_quota, neutral_quota, oppose_quota = allocate_quota(
+                    len(support_dominant),
+                    len(neutral_dominant),
+                    len(oppose_dominant),
+                    limit
                 )
 
-                results.append(result)
+                # 选择帖子
+                selected_posts.extend([r for _, r, _ in support_dominant[:support_quota]])
+                selected_posts.extend([r for _, r, _ in neutral_dominant[:neutral_quota]])
+                selected_posts.extend([r for _, r, _ in oppose_dominant[:oppose_quota]])
 
-            return results
+            # 第三步：找出最火的帖子并标记
+            if selected_posts:
+                hottest_post = max(selected_posts, key=lambda p: p.total_interactions)
+                hottest_post.is_hottest = True  # 添加标记
+
+            return selected_posts
 
         finally:
             conn.close()
 
-    def _get_user_bubble_index(self, user_id: str) -> float:
-        """获取用户的信息茧房指数
+    def _analyze_single_post_stance(
+        self,
+        post_id: str,
+        conn: sqlite3.Connection
+    ) -> Optional[PostStanceAnalysis]:
+        """分析单个帖子的立场分布
 
-        Args:
-            user_id: 用户ID
+        优化：综合考虑评论内容、点赞行为、关注关系来判定立场
+        """
+        cursor = conn.cursor()
+
+        # 获取帖子内容
+        cursor.execute("SELECT content, author_id, created_at FROM posts WHERE post_id = ?", (post_id,))
+        post_data = cursor.fetchone()
+        if not post_data:
+            return None
+
+        post_content, post_author, post_created_at = post_data
+
+        # 生成帖子的embedding
+        post_vector = self._get_text_vector(post_content)
+
+        # 获取所有评论
+        cursor.execute("""
+            SELECT author_id, content, created_at FROM comments
+            WHERE post_id = ?
+            ORDER BY created_at
+        """, (post_id,))
+
+        comments = cursor.fetchall()
+
+        if not comments:
+            return None
+
+        # 分析每条评论的立场和embedding
+        user_vectors = []
+        stance_scores = []
+
+        for author_id, content, comment_created_at in comments:
+            # 1. 基于评论内容的初始立场分析
+            stance, intensity = self._analyze_stance_with_intensity(content)
+
+            # 2. 获取点赞行为（如果likes表存在）
+            has_liked = False
+            try:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM likes
+                    WHERE user_id = ? AND post_id = ?
+                """, (author_id, post_id))
+                has_liked = cursor.fetchone()[0] > 0
+            except sqlite3.OperationalError:
+                # likes表不存在，跳过点赞检测
+                pass
+
+            # 3. 获取关注关系及时间
+            cursor.execute("""
+                SELECT created_at FROM follows
+                WHERE follower_id = ? AND followed_id = ?
+                ORDER BY created_at ASC
+                LIMIT 1
+            """, (author_id, post_author))
+            follow_result = cursor.fetchone()
+
+            # 4. 综合行为加权调整立场
+            if has_liked:
+                # 点赞：强烈支持信号，大幅加权
+                if stance == 'support':
+                    intensity = min(1.0, intensity + 0.4)  # 提升情绪强度
+                elif stance == 'neutral':
+                    stance = 'support'  # 中立转支持
+                    intensity = 0.6
+                elif stance == 'oppose':
+                    # 反对但点赞，转为中立
+                    stance = 'neutral'
+                    intensity = intensity * 0.5
+
+            if follow_result:
+                follow_created_at = follow_result[0]
+
+                # 判断关注时间与帖子创建时间的关系
+                if follow_created_at and post_created_at:
+                    try:
+                        follow_time = datetime.fromisoformat(follow_created_at.replace('Z', '+00:00'))
+                        post_time = datetime.fromisoformat(post_created_at.replace('Z', '+00:00'))
+
+                        if follow_time > post_time:
+                            # 帖子发布后才关注：通过帖子关注，高支持权重
+                            if stance == 'support':
+                                intensity = min(1.0, intensity + 0.3)
+                            elif stance == 'neutral':
+                                stance = 'support'
+                                intensity = 0.5
+                            elif stance == 'oppose':
+                                # 反对但关注了，转为中立
+                                stance = 'neutral'
+                                intensity = intensity * 0.6
+                        else:
+                            # 帖子发布前就关注：已有关系，少量支持权重
+                            if stance == 'neutral':
+                                stance = 'support'
+                                intensity = 0.3
+                            elif stance == 'support':
+                                intensity = min(1.0, intensity + 0.1)
+                    except:
+                        # 时间解析失败，忽略时间因素
+                        pass
+                else:
+                    # 无法判断时间，给予少量支持权重
+                    if stance == 'neutral':
+                        stance = 'support'
+                        intensity = 0.2
+
+            # 生成用户的embedding（如果还没生成）
+            if author_id not in self.user_vectors:
+                user_vec = self._generate_user_vector(author_id, conn)
+                self.user_vectors[author_id] = user_vec
+            else:
+                user_vec = self.user_vectors[author_id]
+
+            user_vectors.append((author_id, user_vec, stance, intensity))
+            stance_scores.append(stance)
+
+        # 计算立场分布
+        total = len(stance_scores)
+        support_count = stance_scores.count('support')
+        oppose_count = stance_scores.count('oppose')
+        neutral_count = stance_scores.count('neutral')
+
+        # 计算交互中心向量
+        interaction_vectors = [emb.combined for _, emb, _, _ in user_vectors]
+        interaction_centroid = np.mean(interaction_vectors, axis=0)
+
+        # 计算影响力
+        high_influence = self._calculate_influence_by_vector(
+            post_vector, user_vectors
+        )
+
+        # 计算高茧房用户支持比例
+        high_bubble_users = [
+            (uid, emb, stance) for uid, emb, stance, _ in user_vectors
+            if emb.bubble_index > 0.6
+        ]
+
+        high_bubble_support = (
+            sum(1 for _, _, stance in high_bubble_users if stance == 'support') /
+            len(high_bubble_users) if high_bubble_users else 0
+        )
+
+        return PostStanceAnalysis(
+            post_id=post_id,
+            total_interactions=total,
+            support_ratio=support_count / total,
+            neutral_ratio=neutral_count / total,
+            oppose_ratio=oppose_count / total,
+            support_count=support_count,
+            neutral_count=neutral_count,
+            oppose_count=oppose_count,
+            interaction_centroid=interaction_centroid,
+            high_influence_users=high_influence,
+            high_bubble_support_ratio=high_bubble_support
+        )
+
+    def _calculate_influence_by_vector(
+        self,
+        post_vec: np.ndarray,
+        user_vectors: List[Tuple[str, UserVector, str, float]]
+    ) -> List[Dict]:
+        """基于embedding计算影响力
+
+        用户embedding与帖子embedding的相似度越高，受影响越大
+        """
+        influence_list = []
+
+        # 计算每个用户与帖子的余弦相似度
+        post_vec_norm = post_vec / (np.linalg.norm(post_vec) + 1e-8)
+
+        for user_id, user_vec, stance, intensity in user_vectors:
+            # 内容偏好相似度
+            content_sim = np.dot(user_vec.content_preference, post_vec_norm)
+
+            # 立场一致性
+            stance_score = 1.0 if stance == 'support' else (0.5 if stance == 'neutral' else 0.0)
+
+            # 综合影响力分数
+            influence = (
+                content_sim * 0.6 +  # 内容相似度
+                stance_score * 0.3 +  # 立场一致性
+                intensity * 0.1 +      # 情绪强度
+                user_vec.bubble_index * 0.2  # 茧房指数加成
+            )
+
+            influence = max(0, min(1, influence))
+
+            if influence > 0.6:  # 只保留高影响力用户
+                influence_list.append({
+                    'user_id': user_id,
+                    'score': influence,
+                    'stance': stance,
+                    'bubble_index': user_vec.bubble_index
+                })
+
+        # 排序并返回前5个
+        influence_list.sort(key=lambda x: x['score'], reverse=True)
+        return influence_list[:5]
+
+    # ==================== 工具方法 ====================
+
+    def get_user_similarity(self, user_id1: str, user_id2: str) -> float:
+        """计算两个用户的相似度
 
         Returns:
-            信息茧房指数 [0, 1]
+            余弦相似度 [0, 1]
         """
-        try:
-            from src.filter_bubble_analyzer import FilterBubbleAnalyzer
-            analyzer = FilterBubbleAnalyzer(self.db_path)
-            metrics = analyzer.analyze_user_bubble(user_id)
-            return metrics.echo_chamber_index
-        except:
-            return 0.5  # 默认值
+        conn = self._get_connection()
 
-    def _calculate_user_influence(
+        try:
+            # 获取或生成embedding
+            if user_id1 not in self.user_vectors:
+                self.user_vectors[user_id1] = self._generate_user_vector(user_id1, conn)
+            if user_id2 not in self.user_vectors:
+                self.user_vectors[user_id2] = self._generate_user_vector(user_id2, conn)
+
+            emb1 = self.user_vectors[user_id1].combined
+            emb2 = self.user_vectors[user_id2].combined
+
+            # 余弦相似度
+            similarity = np.dot(emb1, emb2) / (
+                np.linalg.norm(emb1) * np.linalg.norm(emb2) + 1e-8
+            )
+
+            return float(similarity)
+
+        finally:
+            conn.close()
+
+    def find_similar_users(
         self,
         user_id: str,
-        post_id: str,
-        post_created_at: str,
-        conn: sqlite3.Connection,
-        has_liked: bool = False,
-        has_shared: bool = False
-    ) -> UserInfluenceMetrics:
-        """计算用户受帖子影响的程度
-
-        综合考虑：
-        1. 点赞行为（直接支持）
-        2. 评论内容（立场分析）
-        3. 行为变化（帖子前后的活跃度变化）
-        4. 反应时间（多快做出反应）
-        5. 信息茧房指数（高茧房用户更容易被影响）
-
-        Args:
-            user_id: 用户ID
-            post_id: 帖子ID
-            post_created_at: 帖子创建时间
-            conn: 数据库连接
-            has_liked: 是否点赞（外部提供，避免依赖likes表）
-            has_shared: 是否分享（外部提供，避免依赖shares表）
+        top_k: int = 10
+    ) -> List[Tuple[str, float]]:
+        """找到与指定用户最相似的用户
 
         Returns:
-            UserInfluenceMetrics: 影响程度指标
-        """
-        cursor = conn.cursor()
-
-        # 1. 获取用户的茧房指数
-        bubble_index = self._get_user_bubble_index(user_id)
-
-        # 2. 检查评论行为
-        cursor.execute("""
-            SELECT comment_id, content, created_at FROM comments
-            WHERE author_id = ? AND post_id = ?
-            ORDER BY created_at
-            LIMIT 1
-        """, (user_id, post_id))
-
-        comment_result = cursor.fetchone()
-        has_commented = comment_result is not None
-        comment_content = comment_result[1] if comment_result else None
-        comment_time = comment_result[2] if comment_result else None
-
-        # 3. 判断行为类型
-        if has_shared:
-            behavior_type = 'share'
-            base_influence = 0.9
-        elif has_commented:
-            behavior_type = 'comment'
-            base_influence = 0.7
-        elif has_liked:
-            behavior_type = 'like'
-            base_influence = 0.5
-        else:
-            behavior_type = 'view_only'
-            base_influence = 0.1
-
-        # 4. 计算反应时间（小时）
-        from datetime import datetime
-
-        reaction_time_hours = float('inf')
-        if comment_time:
-            try:
-                comment_dt = datetime.fromisoformat(comment_time.replace('Z', '+00:00'))
-                post_dt = datetime.fromisoformat(post_created_at.replace('Z', '+00:00'))
-                reaction_time_hours = (comment_dt - post_dt).total_seconds() / 3600
-            except:
-                reaction_time_hours = float('inf')
-
-        # 反应时间越短，影响越大（24小时内线性衰减）
-        if reaction_time_hours < float('inf'):
-            time_factor = max(0, 1 - reaction_time_hours / 24)
-        else:
-            time_factor = 0
-
-        # 5. 分析评论立场
-        if comment_content:
-            stance = self._analyze_comment_stance(comment_content)
-        elif has_liked:
-            stance = 'support'  # 点赞默认为支持
-        else:
-            stance = 'neutral'
-
-        # 6. 分析行为变化（比较用户在帖子前后1周内的活跃度）
-        cursor.execute("""
-            SELECT
-                COUNT(CASE WHEN created_at < ? THEN 1 END) as before_count,
-                COUNT(CASE WHEN created_at >= ? THEN 1 END) as after_count
-            FROM posts
-            WHERE author_id = ?
-            AND created_at >= datetime(?, '-7 days')
-            AND created_at <= datetime(?, '+7 days')
-        """, (post_created_at, post_created_at, user_id, post_created_at, post_created_at))
-
-        before_after = cursor.fetchone()
-        posts_before = before_after[0] if before_after else 0
-        posts_after = before_after[1] if before_after else 0
-
-        # 计算活跃度变化 [-1, 1]
-        if posts_before + posts_after > 0:
-            behavior_change = (posts_after - posts_before) / max(posts_before + posts_after, 1)
-        else:
-            behavior_change = 0
-
-        # 7. 计算综合影响分数
-        # 基础影响 + 时间因子 + 茧房指数加成 + 行为变化加成
-        influence_score = (
-            base_influence * 0.4 +
-            time_factor * 0.2 +
-            bubble_index * 0.2 +  # 高茧房用户更容易被影响
-            abs(behavior_change) * 0.2
-        )
-
-        # 限制在 [0, 1]
-        influence_score = max(0, min(1, influence_score))
-
-        return UserInfluenceMetrics(
-            user_id=user_id,
-            post_id=post_id,
-            influence_score=influence_score,
-            stance=stance,
-            behavior_type=behavior_type,
-            behavior_change=behavior_change,
-            bubble_index=bubble_index,
-            time_to_react=reaction_time_hours if reaction_time_hours < float('inf') else -1
-        )
-
-    def _check_table_exists(self, conn: sqlite3.Connection, table_name: str) -> bool:
-        """检查表是否存在"""
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT name FROM sqlite_master
-            WHERE type='table' AND name=?
-        """, (table_name,))
-        return cursor.fetchone() is not None
-
-    def analyze_post_factions_enhanced(
-        self,
-        limit: int = 50,
-        min_comments: int = 3
-    ) -> List[Dict]:
-        """增强版帖子派系分析（加入点赞行为和影响程度）
-
-        Args:
-            limit: 分析的最大帖子数
-            min_comments: 最少评论数
-
-        Returns:
-            增强的帖子派系分布列表，包含影响程度数据
+            [(user_id, similarity), ...]
         """
         conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
-            # 检查是否有likes表
-            has_likes_table = self._check_table_exists(conn, 'likes')
-            has_shares_table = self._check_table_exists(conn, 'shares')
+            # 生成目标用户的embedding
+            if user_id not in self.user_vectors:
+                self.user_vectors[user_id] = self._generate_user_vector(user_id, conn)
 
-            # 获取有足够互动的帖子（评论+点赞）
-            cursor.execute("""
-                SELECT p.post_id, p.created_at, p.num_comments, p.num_likes
-                FROM posts p
-                WHERE p.num_comments >= ?
-                ORDER BY (p.num_comments + p.num_likes) DESC
-                LIMIT ?
-            """, (min_comments, limit))
+            target_emb = self.user_vectors[user_id].combined
 
-            posts = cursor.fetchall()
-            results = []
+            # 获取所有其他用户
+            cursor.execute("SELECT user_id FROM users WHERE user_id != ?", (user_id,))
+            other_users = [row[0] for row in cursor.fetchall()]
 
-            for post_id, post_created_at, num_comments, num_likes in posts:
-                # 1. 获取所有点赞用户（如果有likes表）
-                like_users = set()
-                if has_likes_table:
-                    try:
-                        cursor.execute("""
-                            SELECT user_id, created_at FROM likes
-                            WHERE post_id = ?
-                        """, (post_id,))
-                        likes = cursor.fetchall()
-                        like_users = set(user_id for user_id, _ in likes)
-                    except:
-                        pass  # 表可能存在但查询失败
+            similarities = []
+            for other_id in other_users:
+                if other_id not in self.user_vectors:
+                    self.user_vectors[other_id] = self._generate_user_vector(other_id, conn)
 
-                # 2. 获取所有评论
-                cursor.execute("""
-                    SELECT comment_id, author_id, content, created_at
-                    FROM comments
-                    WHERE post_id = ?
-                    ORDER BY created_at
-                """, (post_id,))
+                other_emb = self.user_vectors[other_id].combined
 
-                comments = cursor.fetchall()
-
-                if not comments:
-                    continue
-
-                # 3. 分析每条评论的立场
-                stance_distribution = {'support': 0, 'neutral': 0, 'oppose': 0}
-                commenter_stances = []
-                user_influences = []
-
-                # 分析评论者
-                for comment_id, author_id, content, comment_time in comments:
-                    stance = self._analyze_comment_stance(content)
-                    stance_distribution[stance] += 1
-                    commenter_stances.append((author_id, stance))
-
-                    # 计算影响程度
-                    influence = self._calculate_user_influence(
-                        author_id, post_id, post_created_at, conn,
-                        has_liked=(author_id in like_users),
-                        has_shared=False  # 需要shares表时检查
-                    )
-                    user_influences.append(influence)
-
-                # 分析仅点赞未评论的用户（如果有likes表）
-                if has_likes_table:
-                    for like_user_id in like_users:
-                        if like_user_id not in [c[0] for c in comments]:
-                            stance_distribution['support'] += 1  # 点赞视为支持
-
-                            # 计算影响程度
-                            influence = self._calculate_user_influence(
-                                like_user_id, post_id, post_created_at, conn,
-                                has_liked=True,
-                                has_shared=False
-                            )
-                            user_influences.append(influence)
-
-                total_interactions = len(comments) + len(like_users)
-                support_ratio = stance_distribution['support'] / total_interactions
-                neutral_ratio = stance_distribution['neutral'] / total_interactions
-                oppose_ratio = stance_distribution['oppose'] / total_interactions
-
-                # 4. 计算影响程度统计
-                high_influence_users = [u for u in user_influences if u.influence_score > 0.7]
-                avg_influence = sum(u.influence_score for u in user_influences) / len(user_influences) if user_influences else 0
-
-                # 5. 分析高茧房用户的立场倾向
-                high_bubble_users = [u for u in user_influences if u.bubble_index > 0.6]
-                high_bubble_support_ratio = (
-                    sum(1 for u in high_bubble_users if u.stance == 'support') / len(high_bubble_users)
-                    if high_bubble_users else 0
+                sim = np.dot(target_emb, other_emb) / (
+                    np.linalg.norm(target_emb) * np.linalg.norm(other_emb) + 1e-8
                 )
 
-                result = {
-                    'post_id': post_id,
-                    'total_comments': len(comments),
-                    'total_likes': len(like_users) if has_likes_table else num_likes,
-                    'total_interactions': total_interactions,
-                    'support_count': stance_distribution['support'],
-                    'neutral_count': stance_distribution['neutral'],
-                    'oppose_count': stance_distribution['oppose'],
-                    'support_ratio': support_ratio,
-                    'neutral_ratio': neutral_ratio,
-                    'oppose_ratio': oppose_ratio,
-                    'top_commenters': commenter_stances[:10],
-                    'like_count': len(like_users) if has_likes_table else num_likes,
-                    'support_by_like': len(like_users - set(c[0] for c in comments)) if has_likes_table else 0,
-                    'avg_influence_score': avg_influence,
-                    'high_influence_count': len(high_influence_users),
-                    'high_influence_users': [
-                        {'user_id': u.user_id, 'score': u.influence_score, 'stance': u.stance}
-                        for u in sorted(high_influence_users, key=lambda x: x.influence_score, reverse=True)[:5]
-                    ],
-                    'high_bubble_users_count': len(high_bubble_users),
-                    'high_bubble_support_ratio': high_bubble_support_ratio
-                }
+                similarities.append((other_id, float(sim)))
 
-                results.append(result)
-
-            return results
+            # 排序并返回top-k
+            similarities.sort(key=lambda x: x[1], reverse=True)
+            return similarities[:top_k]
 
         finally:
             conn.close()
 
-    def get_post_factions_summary(
+    def get_community_report(self) -> Dict:
+        """获取完整的社区分析报告"""
+        communities = self.detect_communities()
+
+        if not communities:
+            return {
+                'num_communities': 0,
+                'communities': [],
+                'total_users': len(self.user_vectors)
+            }
+
+        # 统计信息
+        total_users = sum(len(c.members) for c in communities)
+
+        # 按大小排序
+        communities_sorted = sorted(communities, key=lambda x: len(x.members), reverse=True)
+
+        return {
+            'num_communities': len(communities),
+            'total_users': total_users,
+            'avg_community_size': total_users / len(communities) if communities else 0,
+            'max_community_size': max(len(c.members) for c in communities) if communities else 0,
+            'num_echo_chambers': sum(1 for c in communities if c.is_echo_chamber),
+            'avg_cohesion': np.mean([c.cohesion for c in communities]),
+            'communities': [
+                {
+                    'id': c.community_id,
+                    'name': c.name,
+                    'size': len(c.members),
+                    'cohesion': c.cohesion,
+                    'stance_distribution': c.stance_distribution,
+                    'is_echo_chamber': c.is_echo_chamber,
+                    'members': c.members
+                }
+                for c in communities_sorted
+            ]
+        }
+
+    def get_post_stances_summary(
         self,
-        limit: int = 50,
-        min_comments: int = 3,
-        use_enhanced: bool = True
+        limit: int = 10,
+        min_comments: int = 3
     ) -> Dict:
-        """获取帖子派系分析的汇总信息
+        """获取帖子立场分析汇总（智能选择10条帖子+最火帖子特别分析）"""
+        post_stances = self.analyze_post_stances(limit, min_comments)
 
-        Args:
-            limit: 分析的最大帖子数
-            min_comments: 最少评论数
-            use_enhanced: 是否使用增强版分析（包含点赞和影响程度）
+        if not post_stances:
+            return {
+                'total_posts_analyzed': 0,
+                'post_stances': [],
+                'hottest_post': None,
+                'method': 'embedding'
+            }
 
-        Returns:
-            汇总信息字典
-        """
-        if use_enhanced:
-            post_factions = self.analyze_post_factions_enhanced(limit, min_comments)
-        else:
-            # 转换旧格式为新格式
-            old_factions = self.analyze_post_factions(limit, min_comments)
-            post_factions = [
+        # 计算平均统计
+        avg_support = np.mean([p.support_ratio for p in post_stances])
+        avg_neutral = np.mean([p.neutral_ratio for p in post_stances])
+        avg_oppose = np.mean([p.oppose_ratio for p in post_stances])
+        avg_bubble_support = np.mean([p.high_bubble_support_ratio for p in post_stances])
+
+        # 找出最火的帖子
+        hottest_post = next((p for p in post_stances if p.is_hottest), None)
+
+        # 找出最具分歧和共识的帖子
+        most_divisive = max(
+            post_stances,
+            key=lambda p: min(p.support_ratio, p.oppose_ratio)
+        )
+
+        most_consensus = max(
+            post_stances,
+            key=lambda p: max(p.support_ratio, p.neutral_ratio, p.oppose_ratio)
+        )
+
+        return {
+            'total_posts_analyzed': len(post_stances),
+            'avg_support_ratio': float(avg_support),
+            'avg_neutral_ratio': float(avg_neutral),
+            'avg_oppose_ratio': float(avg_oppose),
+            'high_bubble_support_ratio': float(avg_bubble_support),
+            'hottest_post': {
+                'post_id': hottest_post.post_id,
+                'total_interactions': hottest_post.total_interactions,
+                'support_ratio': float(hottest_post.support_ratio),
+                'neutral_ratio': float(hottest_post.neutral_ratio),
+                'oppose_ratio': float(hottest_post.oppose_ratio),
+                'high_influence_users': hottest_post.high_influence_users,
+                'high_bubble_support_ratio': float(hottest_post.high_bubble_support_ratio)
+            } if hottest_post else None,
+            'most_divisive_post': {
+                'post_id': most_divisive.post_id,
+                'support_ratio': float(most_divisive.support_ratio),
+                'oppose_ratio': float(most_divisive.oppose_ratio),
+                'total_interactions': most_divisive.total_interactions
+            },
+            'most_consensus_post': {
+                'post_id': most_consensus.post_id,
+                'dominant_stance': 'support' if most_consensus.support_ratio > 0.5 else
+                                   'neutral' if most_consensus.neutral_ratio > 0.5 else 'oppose',
+                'ratio': float(max(most_consensus.support_ratio,
+                                  most_consensus.neutral_ratio,
+                                  most_consensus.oppose_ratio)),
+                'total_interactions': most_consensus.total_interactions
+            },
+            'post_stances': [
                 {
                     'post_id': p.post_id,
-                    'total_comments': p.total_comments,
-                    'total_likes': getattr(p, 'like_count', 0),
-                    'total_interactions': p.total_comments + getattr(p, 'like_count', 0),
+                    'total_interactions': p.total_interactions,
+                    'total_comments': int(p.support_count + p.neutral_count + p.oppose_count),  # 添加评论总数
+                    'support_ratio': float(p.support_ratio),
+                    'neutral_ratio': float(p.neutral_ratio),
+                    'oppose_ratio': float(p.oppose_ratio),
                     'support_count': p.support_count,
                     'neutral_count': p.neutral_count,
                     'oppose_count': p.oppose_count,
-                    'support_ratio': p.support_ratio,
-                    'neutral_ratio': p.neutral_ratio,
-                    'oppose_ratio': p.oppose_ratio,
-                    'top_commenters': p.top_commenters,
-                    'like_count': getattr(p, 'like_count', 0),
-                    'support_by_like': getattr(p, 'support_by_like', 0),
-                    'avg_influence_score': 0,
-                    'high_influence_count': 0,
-                    'high_influence_users': [],
-                    'high_bubble_users_count': 0,
-                    'high_bubble_support_ratio': 0
+                    'high_influence_users': p.high_influence_users,
+                    'high_bubble_support_ratio': float(p.high_bubble_support_ratio),
+                    'is_hottest': p.is_hottest
                 }
-                for p in old_factions
-            ]
-
-        if not post_factions:
-            return {
-                'total_posts_analyzed': 0,
-                'avg_support_ratio': 0.0,
-                'avg_neutral_ratio': 0.0,
-                'avg_oppose_ratio': 0.0,
-                'most_divisive_post': None,
-                'most_consensus_post': None,
-                'avg_influence_score': 0.0,
-                'high_bubble_support_ratio': 0.0,
-                'post_factions': [],
-                'analysis_type': 'enhanced' if use_enhanced else 'basic'
-            }
-
-        # 计算平均值
-        avg_support = sum(p['support_ratio'] for p in post_factions) / len(post_factions)
-        avg_neutral = sum(p['neutral_ratio'] for p in post_factions) / len(post_factions)
-        avg_oppose = sum(p['oppose_ratio'] for p in post_factions) / len(post_factions)
-        avg_influence = sum(p.get('avg_influence_score', 0) for p in post_factions) / len(post_factions)
-        avg_high_bubble_support = sum(p.get('high_bubble_support_ratio', 0) for p in post_factions) / len(post_factions)
-
-        # 找出最具分歧的帖子（赞成和反对比例接近且都较高）
-        most_divisive = max(
-            post_factions,
-            key=lambda p: min(p['support_ratio'], p['oppose_ratio'])
-        )
-
-        # 找出最具共识的帖子（某一立场占绝对优势）
-        most_consensus = max(
-            post_factions,
-            key=lambda p: max(p['support_ratio'], p['neutral_ratio'], p['oppose_ratio'])
-        )
-
-        # 找出影响最大的帖子
-        if use_enhanced:
-            most_influential = max(
-                post_factions,
-                key=lambda p: p.get('avg_influence_score', 0)
-            )
-        else:
-            most_influential = None
-
-        return {
-            'total_posts_analyzed': len(post_factions),
-            'avg_support_ratio': avg_support,
-            'avg_neutral_ratio': avg_neutral,
-            'avg_oppose_ratio': avg_oppose,
-            'avg_influence_score': avg_influence,
-            'high_bubble_support_ratio': avg_high_bubble_support,
-            'most_divisive_post': {
-                'post_id': most_divisive['post_id'],
-                'support_ratio': most_divisive['support_ratio'],
-                'oppose_ratio': most_divisive['oppose_ratio'],
-                'total_interactions': most_divisive['total_interactions']
-            },
-            'most_consensus_post': {
-                'post_id': most_consensus['post_id'],
-                'dominant_stance': 'support' if most_consensus['support_ratio'] > 0.5 else
-                                   'neutral' if most_consensus['neutral_ratio'] > 0.5 else 'oppose',
-                'ratio': max(most_consensus['support_ratio'], most_consensus['neutral_ratio'], most_consensus['oppose_ratio']),
-                'total_interactions': most_consensus['total_interactions']
-            },
-            'most_influential_post': {
-                'post_id': most_influential['post_id'],
-                'avg_influence_score': most_influential.get('avg_influence_score', 0),
-                'total_interactions': most_influential['total_interactions']
-            } if most_influential else None,
-            'post_factions': post_factions,
-            'analysis_type': 'enhanced' if use_enhanced else 'basic'
+                for p in post_stances
+            ],
+            'method': 'embedding'
         }
