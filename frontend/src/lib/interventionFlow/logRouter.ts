@@ -121,6 +121,10 @@ const amplifierAnchors = [
   // Individual Amplifier agent comment lines — needed so they route back to Amplifier
   // even when Leader is the active role during parallel Leader+Amplifier execution.
   /^💬\s*🤖\s*Amplifier-\d+\b/i,
+  // Per-agent decision log lines emitted before each LLM call.
+  /^🎯\s*amplifier-\d+\b/i,
+  // Per-agent content-analysis log lines emitted before the decision step.
+  /^🔍\s*amplifier-\d+\b/i,
 ]
 
 const monitoringAnchors = [
@@ -432,6 +436,15 @@ function compressDisplayLine(cleanLine: string) {
       const prefix = prefixRaw ? `${prefixRaw} ` : ''
       return `${prefix}阶段 ${phaseNum}：${descZh}`
     }
+  }
+
+  // Amplifier per-agent analysis line: route as-is (carries 【role】 for troop filtering).
+  if (/^🔍\s*amplifier-\d+\b/i.test(trimmed)) {
+    return trimmed
+  }
+  // Amplifier per-agent decision line: route to Amplifier panel as-is (carries 【role】 for troop filtering).
+  if (/^🎯\s*amplifier-\d+\b/i.test(trimmed)) {
+    return trimmed
   }
 
   // Amplifier per-agent comment: keep the body, but normalize the label and hide model name.

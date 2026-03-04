@@ -3144,12 +3144,44 @@ class SimpleamplifierAgent:
                     target_post_id = target_content.get("target_post_id")
                 # Combined log record
                 workflow_logger.info(f"🤖 Agent {self.agent_id} ({self.persona_name}) start generating response - enhanced format, instruction: {role_instruction.get('response_style', 'none')}")
+                # 决策日志：供前端展示各兵种工作流
+                try:
+                    _agent_num = int(str(self.agent_id).split("_")[1]) + 1
+                except (IndexError, ValueError):
+                    _agent_num = self.agent_id
+                _role_type = role_instruction.get("role_type", getattr(self, "assigned_role", "general"))
+                _style     = role_instruction.get("response_style", "")
+                _tone      = role_instruction.get("tone", "")
+                _key_msg   = role_instruction.get("key_message", "")
+                if len(_key_msg) > 40:
+                    _key_msg = _key_msg[:40] + "..."
+                # Stage 0: real LLM role-specific content analysis
+                _analysis = self._run_role_analysis_llm(_role_type, actual_content, role_instruction)
+                _role_analysis_context = _analysis.get('context', '')
+                workflow_logger.info(
+                    f"🔍 amplifier-{_agent_num}【{_role_type}】 {_analysis['stage_name']}: {_analysis['summary']}"
+                )
+                # Stage 1: strategy decision
+                workflow_logger.info(
+                    f"🎯 amplifier-{_agent_num}【{_role_type}】({self.persona_name}) "
+                    f"决策: 风格={_style} · 语气={_tone} · 指令={_key_msg}"
+                )
             else:
                 # Simple string content
                 actual_content = str(target_content)
                 role_instruction = {}
                 # Combined log record
                 workflow_logger.info(f"🤖 Agent {self.agent_id} ({self.persona_name}) start generating response - simple format")
+                # 决策日志（简单模式）
+                try:
+                    _agent_num = int(str(self.agent_id).split("_")[1]) + 1
+                except (IndexError, ValueError):
+                    _agent_num = self.agent_id
+                _role_type = getattr(self, "assigned_role", "general")
+                workflow_logger.info(
+                    f"🎯 amplifier-{_agent_num}【{_role_type}】({self.persona_name}) 决策: (简单模式)"
+                )
+                _role_analysis_context = ""
 
             # Validate content is not empty
             if not actual_content or not actual_content.strip():
@@ -3161,6 +3193,10 @@ class SimpleamplifierAgent:
 
             # Prepare role guidance and few-shot examples
             role_guidance = self._prepare_role_guidance(role_instruction)
+            role_analysis_section = (
+                f"\nANALYSIS CONTEXT (based on Stage 0 analysis — use this to make your response more targeted):\n{_role_analysis_context}\n"
+                if _role_analysis_context else ""
+            )
             few_shot_examples_text = self._prepare_few_shot_examples()
 
             # Add timestamp and random seeds to increase diversity
@@ -3224,7 +3260,7 @@ Key traits:
 - Primary goal: {self.primary_goal}
 
 {role_guidance}
-
+{role_analysis_section}
 {few_shot_examples_text}
 
 NATURAL HUMAN CONVERSATION GUIDELINES
@@ -3629,6 +3665,97 @@ CRITICAL REQUIREMENTS
         except Exception as e:
             workflow_logger.error(f"       ❌ Failed to prepare role guidance: {e}")
             return ""
+
+    def _run_role_analysis_llm(self, role_type: str, content: str, role_instruction: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Stage 0: Lightweight LLM call for role-specific content analysis.
+        Returns {'stage_name': str, 'summary': str, 'context': str}.
+        The 'context' field is injected into the Stage 2 generation prompt.
+        """
+        _STAGE_NAMES = {
+            "empath": "情绪感知",
+            "fact_checker": "声明识别",
+            "amplifier": "影响力评估",
+            "niche_filler": "空位检测",
+        }
+        stage_name = _STAGE_NAMES.get(role_type, "内容分析")
+        _fallback = {"stage_name": stage_name, "summary": "分析跳过，直接生成", "context": ""}
+
+        try:
+            truncated = content[:500] if len(content) > 500 else content
+
+            if role_type == "empath":
+                system_msg = (
+                    "You are a social psychologist specializing in online emotional dynamics. "
+                    "Analyze briefly and precisely."
+                )
+                user_msg = (
+                    f"Analyze this social media post's emotional context.\n"
+                    f"Post: {truncated}\n\n"
+                    f"Reply in EXACTLY this format (3 lines):\n"
+                    f"Emotion: [dominant emotion: anger/fear/sadness/anxiety/frustration/neutral]\n"
+                    f"Intensity: [high/medium/low]\n"
+                    f"Audience need: [what the audience emotionally needs right now, 1 short sentence]"
+                )
+            elif role_type == "fact_checker":
+                system_msg = (
+                    "You are a professional fact-checker. Identify claims that need verification. "
+                    "Be concise."
+                )
+                user_msg = (
+                    f"Identify the key verifiable claim in this post.\n"
+                    f"Post: {truncated}\n\n"
+                    f"Reply in EXACTLY this format (3 lines):\n"
+                    f"Claim: [the main factual assertion being made]\n"
+                    f"Accuracy risk: [high/medium/low]\n"
+                    f"Evidence type: [what kind of evidence would verify or counter this]"
+                )
+            elif role_type == "amplifier":
+                system_msg = (
+                    "You are a media strategist assessing narrative influence and determining "
+                    "the most effective authoritative response. Be concise."
+                )
+                user_msg = (
+                    f"Assess this post's influence and determine the best authoritative stance.\n"
+                    f"Post: {truncated}\n\n"
+                    f"Reply in EXACTLY this format (3 lines):\n"
+                    f"Narrative: [core message being spread]\n"
+                    f"Viral potential: [high/medium/low]\n"
+                    f"Recommended stance: [what authoritative position to take]"
+                )
+            elif role_type == "niche_filler":
+                system_msg = (
+                    "You are a community manager who identifies missing perspectives and redirects "
+                    "unproductive discussions. Be concise."
+                )
+                user_msg = (
+                    f"Identify what constructive perspective is missing from this discussion.\n"
+                    f"Post: {truncated}\n\n"
+                    f"Reply in EXACTLY this format (3 lines):\n"
+                    f"Missing angle: [what constructive perspective is absent]\n"
+                    f"Alternative topic: [a better direction to redirect this conversation]\n"
+                    f"Gap level: [high/medium/low]"
+                )
+            else:
+                return _fallback
+
+            analysis_response = self.client.chat.completions.create(
+                model=self.selected_model,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+                max_tokens=120,
+                temperature=0.3,
+            )
+            context_text = analysis_response.choices[0].message.content.strip()
+            # Compact multiline output into a single log line
+            summary = context_text.replace("\n", " · ")[:120]
+            return {"stage_name": stage_name, "summary": summary, "context": context_text}
+
+        except Exception as e:
+            workflow_logger.warning(f"⚠️ Role analysis LLM call failed ({role_type}): {e}")
+            return _fallback
 
     def _prepare_few_shot_examples(self) -> str:
         """Prepare few-shot example content."""
@@ -4751,70 +4878,156 @@ class SimpleCoordinationSystem:
         return successful_responses
 
     def _generate_fallback_instruction(self, role_type: str, index: int, target_content: str) -> Dict[str, Any]:
-        """Generate fallback instructions for a specific role."""
+        """Generate fallback instructions for a specific role - aligned with new defense agent prompts."""
         try:
-            if role_type == "technical_rational":
-                return {
-                    "role_type": role_type,
-                    "agent_index": index,
+            # Import typical phrases from defense_agent_prompts
+            from .defense_agent_prompts import (
+                EmpathPrompts, FactCheckerPrompts, AmplifierPrompts, NicheFillerPrompts
+            )
+            
+            # Role-specific configurations aligned with new prompt design
+            role_configs = {
+                "empath": {
+                    "response_style": "emotional de-escalation",
+                    "key_message": "Reduce emotional escalation and create psychological safety",
+                    "tone": "calm, human, respectful, emotionally aware",
+                    "typical_phrases": EmpathPrompts.get_typical_phrases(),
+                    "avoid_phrases": EmpathPrompts.get_avoid_phrases(),
+                    "focus_points": ["Recognize the emotion", "Validate the concern", "Encourage patience"],
+                    "response_length": "30-80 words",
+                    "output_format": "Empathy → Context → Gentle reframing"
+                },
+                "fact_checker": {
+                    "response_style": "evidence-based correction",
+                    "key_message": "Identify misinformation and respond with clear evidence",
+                    "tone": "analytical, neutral, evidence-driven, professional",
+                    "typical_phrases": FactCheckerPrompts.get_typical_phrases(),
+                    "avoid_phrases": FactCheckerPrompts.get_avoid_phrases(),
+                    "focus_points": ["Identify core claim", "Present verifiable facts", "Provide reasoned conclusion"],
+                    "response_length": "50-150 words",
+                    "output_format": "[Claim] → [Verified Information] → [Analysis] → [Conclusion]"
+                },
+                "amplifier": {
+                    "response_style": "authoritative clarification",
+                    "key_message": "Interrupt misinformation cascades with confident clarification",
+                    "tone": "confident, clear, authoritative, concise",
+                    "typical_phrases": AmplifierPrompts.get_typical_phrases(),
+                    "avoid_phrases": AmplifierPrompts.get_avoid_phrases(),
+                    "focus_points": ["Acknowledge discussion", "Clarify key point", "Reinforce verified information"],
+                    "response_length": "40-90 words",
+                    "output_format": "Recognition → Clarification → Stabilization"
+                },
+                "niche_filler": {
+                    "response_style": "constructive topic introduction",
+                    "key_message": "Introduce alternative, low-conflict topics to fill attention vacuums",
+                    "tone": "curious, inviting, light, inclusive",
+                    "typical_phrases": NicheFillerPrompts.get_typical_phrases(),
+                    "avoid_phrases": NicheFillerPrompts.get_avoid_phrases(),
+                    "focus_points": ["Gentle transition", "Introduce constructive angle", "Invite participation"],
+                    "response_length": "30-80 words",
+                    "output_format": "Transition → New Topic → Invitation"
+                },
+                "technical_rational": {
                     "response_style": "professional analysis",
                     "key_message": "Provide objective analysis from a technical perspective",
                     "tone": "objective and professional",
-                    "typical_phrases": ["From a technical perspective", "According to the data", "Research shows"],
+                    "typical_phrases": [
+                        "The technical details here reveal...",
+                        "Looking at this systematically...",
+                        "What the data actually indicates...",
+                        "From an engineering standpoint...",
+                        "The mechanism at work here..."
+                    ],
+                    "avoid_phrases": ["I think", "Maybe", "In my opinion"],
                     "focus_points": ["Provide data support", "Clarify technical details"],
                     "response_length": "80-150 words"
-                }
-            elif role_type == "moderate_neutral":
-                return {
-                    "role_type": role_type,
-                    "agent_index": index,
+                },
+                "moderate_neutral": {
                     "response_style": "balanced and rational",
                     "key_message": "Provide balanced viewpoints and rational analysis",
                     "tone": "calm and balanced",
-                    "typical_phrases": ["I think", "From another angle", "Rationally speaking"],
+                    "typical_phrases": [
+                        "There's merit to multiple perspectives here...",
+                        "Stepping back from the emotion...",
+                        "What if we framed this differently...",
+                        "The nuance here is worth exploring...",
+                        "A balanced view would acknowledge..."
+                    ],
+                    "avoid_phrases": ["I agree", "That makes sense", "You're wrong"],
                     "focus_points": ["Ease opposing emotions", "Seek common ground"],
                     "response_length": "60-120 words"
-                }
-            elif role_type == "public_concern":
-                return {
-                    "role_type": role_type,
-                    "agent_index": index,
-                    "response_style": "express concern",
+                },
+                "public_concern": {
+                    "response_style": "community perspective",
                     "key_message": "Express concerns and expectations from the public perspective",
                     "tone": "concerned but rational",
-                    "typical_phrases": ["As an ordinary person", "What we care about is", "For everyone"],
+                    "typical_phrases": [
+                        "What hits home for many of us is...",
+                        "The practical reality for regular people...",
+                        "At the end of the day, we just want...",
+                        "Speaking from the community perspective...",
+                        "What matters to most people here..."
+                    ],
+                    "avoid_phrases": ["As an ordinary person", "Everyone thinks"],
                     "focus_points": ["Express public concerns", "Focus on real impact"],
                     "response_length": "70-130 words"
-                }
-            elif role_type == "skeptic":
-                return {
-                    "role_type": role_type,
-                    "agent_index": index,
+                },
+                "skeptic": {
                     "response_style": "rational questioning",
                     "key_message": "Raise reasonable questions and request clarification",
                     "tone": "cautious skepticism",
-                    "typical_phrases": ["Need more evidence", "This claim", "Have you considered"],
+                    "typical_phrases": [
+                        "Something doesn't add up here...",
+                        "The logical gaps concern me...",
+                        "Has anyone actually verified...",
+                        "I'd push back on that assumption...",
+                        "Where's the evidence for..."
+                    ],
+                    "avoid_phrases": ["That's wrong", "You're lying", "This is fake"],
                     "focus_points": ["Raise reasonable questions", "Request evidence"],
                     "response_length": "50-100 words"
                 }
-            else:
-                return {
-                    "role_type": "general_support",
-                    "agent_index": index,
-                    "response_style": "general support",
-                    "key_message": "Express support and understanding",
-                    "tone": "neutral support",
-                    "typical_phrases": ["I agree", "That makes sense", "Worth considering"],
-                    "focus_points": ["Express support", "Increase discussion heat"],
-                    "response_length": "40-80 words"
-                }
+            }
+            
+            # Get configuration for the role type
+            config = role_configs.get(role_type, {
+                "response_style": "constructive engagement",
+                "key_message": "Participate thoughtfully in the discussion",
+                "tone": "neutral and engaged",
+                "typical_phrases": [
+                    "Building on that thought...",
+                    "An additional perspective to consider...",
+                    "What's interesting here is...",
+                    "Let me add something to this...",
+                    "This raises an important point..."
+                ],
+                "avoid_phrases": ["I agree", "That makes sense", "Exactly"],
+                "focus_points": ["Be authentic", "Add value", "Stay constructive"],
+                "response_length": "40-80 words"
+            })
+            
+            # Select different phrases based on index for variety
+            typical_phrases = config.get("typical_phrases", [])
+            if typical_phrases:
+                # Use index to select different starting phrases
+                selected_phrases = typical_phrases[index % len(typical_phrases):] + typical_phrases[:index % len(typical_phrases)]
+                config["typical_phrases"] = selected_phrases[:3]  # Take top 3 rotated phrases
+            
+            return {
+                "role_type": role_type,
+                "agent_index": index,
+                **config,
+                "diversity_note": "Each response must be UNIQUE - lead with interesting observations, not template phrases"
+            }
+            
         except Exception as e:
             workflow_logger.info(f"  ⚠️ Failed to generate fallback instruction: {e}")
             return {
                 "role_type": role_type,
                 "response_style": "default",
                 "key_message": "Participate in discussion",
-                "tone": "neutral"
+                "tone": "neutral",
+                "diversity_note": "Be unique and authentic"
             }
     
     async def execute_workflow(self, content_text: str, content_id: str = None,
