@@ -139,6 +139,20 @@ class SelectionConfig:
 
 
 @dataclass
+class ParallelizationConfig:
+    """
+    并行化配置
+
+    控制推荐系统的并行化行为
+    """
+    enabled: bool = True             # 是否启用并行化
+    stage1_parallel: bool = True     # 并行 Stage 1 查询（UserActionHydrator）
+    stage2_parallel: bool = True     # 并行 Stage 2 召回（In/Out Network）
+    use_post_cache: bool = True      # 启用帖子时间步缓存
+    max_workers: int = 4             # 线程池最大工作线程数
+
+
+@dataclass
 class RecommenderConfig:
     """
     推荐系统总配置
@@ -155,6 +169,7 @@ class RecommenderConfig:
     filter: FilterConfig = field(default_factory=FilterConfig)
     selection: SelectionConfig = field(default_factory=SelectionConfig)
     author_credibility: AuthorCredibilityConfig = field(default_factory=AuthorCredibilityConfig)
+    parallelization: ParallelizationConfig = field(default_factory=ParallelizationConfig)
 
     @classmethod
     def from_dict(cls, config_dict: Optional[Dict[str, Any]] = None) -> "RecommenderConfig":
@@ -185,6 +200,7 @@ class RecommenderConfig:
             filter=parse_dataclass(FilterConfig, config_dict.get('filter')),
             selection=parse_dataclass(SelectionConfig, config_dict.get('selection')),
             author_credibility=parse_dataclass(AuthorCredibilityConfig, config_dict.get('author_credibility')),
+            parallelization=parse_dataclass(ParallelizationConfig, config_dict.get('parallelization')),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -201,6 +217,7 @@ class RecommenderConfig:
             'filter': asdict(self.filter),
             'selection': asdict(self.selection),
             'author_credibility': asdict(self.author_credibility),
+            'parallelization': asdict(self.parallelization),
         }
 
 

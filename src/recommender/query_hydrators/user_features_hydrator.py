@@ -4,9 +4,13 @@
 阶段1: 获取用户画像和 Embedding
 """
 
+import ast
+import logging
 from typing import Optional, List
 from ..types import UserContext
 from ..repositories.user_repository import UserRepository
+
+logger = logging.getLogger(__name__)
 
 
 class UserFeaturesHydrator:
@@ -44,7 +48,10 @@ class UserFeaturesHydrator:
         persona_data = self.user_repo.get_user_persona(user_context.user_id)
 
         if persona_data:
-            user_context.persona = persona_data.get('persona')
+            raw_persona = persona_data.get('persona')
+            if raw_persona:
+                # 将 persona 转换为有意义的文本（提取 background 等关键字段）
+                user_context.persona = self._extract_persona_text(raw_persona)
 
             # 如果有 embedding manager，计算 persona embedding
             if self.embedding_manager and user_context.persona:
@@ -53,6 +60,53 @@ class UserFeaturesHydrator:
                 )
 
         return user_context
+
+    def _extract_persona_text(self, raw_persona) -> str:
+        """
+        从原始 persona 数据中提取有意义的文本
+
+        数据库中存储的 persona 可能是字典字符串格式，需要提取
+        background、personality_traits 等关键字段用于 embedding 计算。
+
+        Args:
+            raw_persona: 原始 persona 数据（可能是字符串或字典）
+
+        Returns:
+            用于 embedding 计算的有意义文本
+        """
+        import ast
+
+        # 如果已经是字符串，尝试解析为字典
+        persona_dict = raw_persona
+        if isinstance(raw_persona, str):
+            try:
+                persona_dict = ast.literal_eval(raw_persona)
+            except (ValueError, SyntaxError):
+                # 如果解析失败，直接返回原始字符串
+                return raw_persona
+
+        # 如果是字典，提取关键字段
+        if isinstance(persona_dict, dict):
+            parts = []
+
+            # 提取 background（核心描述）
+            if 'background' in persona_dict:
+                parts.append(persona_dict['background'])
+
+            # 提取 personality_traits
+            if 'personality_traits' in persona_dict:
+                traits = persona_dict['personality_traits']
+                if isinstance(traits, list):
+                    parts.extend(traits)
+
+            # 提取 name 和 profession 作为上下文
+            if 'name' in persona_dict and 'profession' in persona_dict:
+                parts.insert(0, f"{persona_dict['name']}, a {persona_dict['profession']}")
+
+            return '. '.join(parts) if parts else str(persona_dict)
+
+        # 其他情况，直接返回字符串形式
+        return str(raw_persona)
 
     def _compute_persona_embedding(self, persona: str) -> Optional[List[float]]:
         """

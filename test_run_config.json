@@ -6,7 +6,7 @@
     "max_total_posts": 10000,
     "max_total_users": 10,
     "separate_personas": {
-        "neutral_file": "personas/neutral_personas_database.json"
+        "neutral_file": "../personas/neutral_personas_database.json"
     },
     "temperature": 0.9,
     "reset_db": true,

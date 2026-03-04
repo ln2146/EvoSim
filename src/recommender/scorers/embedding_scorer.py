@@ -12,6 +12,7 @@ Embedding 评分器
 from typing import List, Optional
 from ..types import PostCandidate, UserContext
 from ..config import EmbeddingConfig
+from ..embedding.embedding_manager import get_embedding_manager
 
 
 class EmbeddingScorer:
@@ -34,8 +35,7 @@ class EmbeddingScorer:
 
     def _init_embedding_manager(self):
         """延迟初始化 EmbeddingManager"""
-        from ..embedding.embedding_manager import EmbeddingManager
-        self.embedding_manager = EmbeddingManager(
+        self.embedding_manager = get_embedding_manager(
             model_name=self.config.model_name,
             cache_embeddings=self.config.cache_embeddings,
             max_cache_size=self.config.max_cache_size,

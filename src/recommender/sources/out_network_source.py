@@ -20,13 +20,19 @@ class OutNetworkSource:
     def __init__(self):
         self.post_repo = PostRepository()
 
-    def retrieve(self, user_context: UserContext, max_candidates: int = 100) -> List[PostCandidate]:
+    def retrieve(
+        self,
+        user_context: UserContext,
+        max_candidates: int = 100,
+        time_step: int = None
+    ) -> List[PostCandidate]:
         """
         召回热点流帖子
 
         Args:
             user_context: 用户上下文
             max_candidates: 最大候选数量
+            time_step: 当前时间步（用于缓存，None 则不缓存）
 
         Returns:
             标记为 OUT_NETWORK 的候选帖子列表
@@ -34,8 +40,8 @@ class OutNetworkSource:
         candidates = []
         followed_set = user_context.followed_ids
 
-        # 获取新闻帖子
-        news_rows = self.post_repo.get_active_news_posts()
+        # 获取新闻帖子（使用时间步缓存）
+        news_rows = self.post_repo.get_active_news_posts_cached(time_step)
         for row in news_rows:
             candidate = PostCandidate.from_db_row(row)
             author_id = str(row.get('author_id', ''))
@@ -50,8 +56,8 @@ class OutNetworkSource:
 
             candidates.append(candidate)
 
-        # 获取非新闻帖子
-        non_news_rows = self.post_repo.get_active_non_news_posts()
+        # 获取非新闻帖子（使用时间步缓存）
+        non_news_rows = self.post_repo.get_active_non_news_posts_cached(time_step)
         for row in non_news_rows:
             candidate = PostCandidate.from_db_row(row)
             author_id = str(row.get('author_id', ''))

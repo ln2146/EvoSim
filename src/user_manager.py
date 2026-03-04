@@ -99,22 +99,31 @@ class UserManager:
     def _load_persona_file(self, config_file: str):
         """Load persona configurations from various file types with support for separate positive/negative personas."""
         try:
+            # Get the project root directory for resolving relative paths
+            src_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(src_dir)
+
             # Check if the config requests separate persona files
             if config_file == "separate" or "separate" in config_file.lower():
                 return self._load_separate_personas()
-            
+
+            # Resolve config_file to absolute path if not already absolute
+            if not os.path.isabs(config_file):
+                config_file = os.path.join(project_root, config_file)
+
             # Check if the file exists
             if not os.path.exists(config_file):
                 # Try backup file paths
                 backup_files = [
-                    "personas/extreme_personas.jsonl", 
+                    "personas/extreme_personas.jsonl",
                     "personas/personas_from_prolific_description.jsonl"
                 ]
-                
+
                 for backup_file in backup_files:
-                    if os.path.exists(backup_file):
-                        logging.warning(f"Original file {config_file} not found, using backup: {backup_file}")
-                        config_file = backup_file
+                    abs_backup = os.path.join(project_root, backup_file) if not os.path.isabs(backup_file) else backup_file
+                    if os.path.exists(abs_backup):
+                        logging.warning(f"Original file {config_file} not found, using backup: {abs_backup}")
+                        config_file = abs_backup
                         break
                 else:
                     raise FileNotFoundError(f"Persona file not found: {config_file}")
@@ -134,9 +143,17 @@ class UserManager:
         """Load personas - normal users only use neutral personas, while bots can use positive/negative."""
         all_personas = []
 
+        # Get the project root directory (parent of src/)
+        src_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(src_dir)
+
         # Retrieve sampling ratios and file paths from the configuration
         separate_config = self.experiment_config.get('separate_personas', {})
         neutral_file = separate_config.get('neutral_file', "personas/neutral_personas_database.json")
+
+        # Resolve to absolute path if not already absolute
+        if not os.path.isabs(neutral_file):
+            neutral_file = os.path.join(project_root, neutral_file)
 
         # Calculate the required user count
         total_users = self.experiment_config.get('num_users', 3)
@@ -180,6 +197,8 @@ class UserManager:
         if not all_personas:
             logging.warning("No separate personas loaded, falling back to default file")
             default_file = "personas/personas_from_prolific_description.jsonl"
+            if not os.path.isabs(default_file):
+                default_file = os.path.join(project_root, default_file)
             if os.path.exists(default_file):
                 with jsonlines.open(default_file) as reader:
                     all_personas = list(reader)
@@ -382,6 +401,12 @@ class UserManager:
     def _load_personas_from_file(self, file_path: str) -> list:
         """Load persona data from a file"""
         try:
+            # Resolve to absolute path if not already absolute
+            if not os.path.isabs(file_path):
+                src_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(src_dir)
+                file_path = os.path.join(project_root, file_path)
+
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 return data if isinstance(data, list) else data.get('personas', [])

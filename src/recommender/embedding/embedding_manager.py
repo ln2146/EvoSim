@@ -8,10 +8,37 @@ Embedding 管理器
 替代 X 算法的 Grok Transformer
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+from threading import Lock
+from collections import OrderedDict
 import logging
 
 logger = logging.getLogger(__name__)
+
+# 全局单例缓存和锁（按配置键缓存）
+_embedding_manager_instances: Dict[Tuple, 'EmbeddingManager'] = {}
+_embedding_manager_lock = Lock()
+
+
+def get_embedding_manager(**kwargs) -> 'EmbeddingManager':
+    """
+    获取全局单例 EmbeddingManager 实例（按配置键共享）
+
+    线程安全，确保所有用户共享同一个模型实例
+    """
+    key = (
+        kwargs.get('model_name', "paraphrase-MiniLM-L6-v2"),
+        bool(kwargs.get('cache_embeddings', True)),
+        int(kwargs.get('max_cache_size', 10000)),
+        bool(kwargs.get('use_openai_embedding', False)),
+        kwargs.get('openai_model_name')
+    )
+    with _embedding_manager_lock:
+        manager = _embedding_manager_instances.get(key)
+        if manager is None:
+            manager = EmbeddingManager(**kwargs)
+            _embedding_manager_instances[key] = manager
+        return manager
 
 
 class EmbeddingManager:
@@ -55,20 +82,27 @@ class EmbeddingManager:
         self._local_model = None
         self._openai_client = None
         self._openai_model = None
-        self._cache: Dict[str, List[float]] = {}
+        self._cache: OrderedDict[str, List[float]] = OrderedDict()
+        self._cache_lock = Lock()  # 缓存线程安全锁
+        self._init_lock = Lock()   # 初始化线程安全锁
         self._initialized = False
 
     def _ensure_initialized(self):
-        """延迟初始化模型"""
+        """延迟初始化模型（线程安全）"""
         if self._initialized:
             return
 
-        if self.use_openai_embedding:
-            self._init_openai_embedding()
-        else:
-            self._init_local_embedding()
+        with self._init_lock:
+            # 双重检查：可能其他线程已经初始化了
+            if self._initialized:
+                return
 
-        self._initialized = True
+            if self.use_openai_embedding:
+                self._init_openai_embedding()
+            else:
+                self._init_local_embedding()
+
+            self._initialized = True
 
     def _init_local_embedding(self):
         """初始化本地 sentence-transformers 模型"""
@@ -134,7 +168,7 @@ class EmbeddingManager:
         content: str
     ) -> Optional[List[float]]:
         """
-        获取或计算帖子 embedding
+        获取或计算帖子 embedding（线程安全）
 
         优先从缓存获取，缓存未命中则计算并缓存
 
@@ -145,32 +179,44 @@ class EmbeddingManager:
         Returns:
             embedding 向量
         """
-        # 检查缓存
-        if self.cache_embeddings and post_id in self._cache:
-            return self._cache[post_id]
+        # 线程安全：检查缓存
+        if self.cache_embeddings:
+            with self._cache_lock:
+                if post_id in self._cache:
+                    # LRU 更新：移动到末尾
+                    self._cache.move_to_end(post_id)
+                    return self._cache[post_id]
 
-        # 计算 embedding
+        # 计算 embedding（在锁外执行，避免阻塞其他线程）
         embedding = self.encode_text(content)
 
-        # 缓存结果
+        # 线程安全：缓存结果
         if embedding and self.cache_embeddings:
-            self._add_to_cache(post_id, embedding)
+            with self._cache_lock:
+                # 双重检查：可能其他线程已经缓存了
+                if post_id not in self._cache:
+                    self._add_to_cache(post_id, embedding)
 
         return embedding
 
     def _add_to_cache(self, key: str, embedding: List[float]):
-        """添加到缓存，超出限制时清理旧条目"""
+        """
+        添加到缓存（调用者需持有 _cache_lock）
+
+        使用 LRU 策略：超出限制时删除最旧的条目
+        """
         if len(self._cache) >= self.max_cache_size:
-            # 简单策略: 删除一半旧条目
-            keys_to_remove = list(self._cache.keys())[:self.max_cache_size // 2]
-            for k in keys_to_remove:
-                del self._cache[k]
+            # LRU 策略：删除最旧的一半条目（OrderedDict 的首部）
+            num_to_remove = self.max_cache_size // 2
+            for _ in range(num_to_remove):
+                self._cache.popitem(last=False)
 
         self._cache[key] = embedding
+        self._cache.move_to_end(key)  # 确保新条目在末尾
 
     def precompute_embeddings(self, posts: List[Dict]) -> int:
         """
-        批量预计算帖子 embedding
+        批量预计算帖子 embedding（线程安全）
 
         Args:
             posts: 帖子列表，每个帖子需要有 post_id 和 content 字段
@@ -188,23 +234,33 @@ class EmbeddingManager:
             post_id = str(post.get('post_id', ''))
             content = post.get('content', '')
 
-            if post_id and content and post_id not in self._cache:
+            # 线程安全：检查是否已缓存
+            if self.cache_embeddings:
+                with self._cache_lock:
+                    if post_id in self._cache:
+                        continue
+
+            if post_id and content:
                 embedding = self.encode_text(content)
-                if embedding:
-                    self._add_to_cache(post_id, embedding)
-                    count += 1
+                if embedding and self.cache_embeddings:
+                    with self._cache_lock:
+                        if post_id not in self._cache:
+                            self._add_to_cache(post_id, embedding)
+                            count += 1
 
         logger.info(f"Precomputed {count} embeddings")
         return count
 
     def clear_cache(self):
-        """清空缓存"""
-        self._cache.clear()
+        """清空缓存（线程安全）"""
+        with self._cache_lock:
+            self._cache.clear()
 
     @property
     def cache_size(self) -> int:
-        """当前缓存大小"""
-        return len(self._cache)
+        """当前缓存大小（线程安全）"""
+        with self._cache_lock:
+            return len(self._cache)
 
     @property
     def is_available(self) -> bool:
