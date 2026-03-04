@@ -441,14 +441,15 @@ class OpinionBalanceManager:
 
             # Insert the comment into the comments table
             cursor.execute('''
-                INSERT INTO comments (comment_id, content, post_id, author_id, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO comments (comment_id, content, post_id, author_id, created_at, agent_type)
+                VALUES (?, ?, ?, ?, ?, ?)
             ''', (
                 comment_id,
                 final_content,  # Using the enhanced content
                 actual_post_id,  # Using the actual post ID
                 agent_user_id,
-                datetime.now()
+                datetime.now(),
+                'amplifier_agent'  # Mark as defense agent so niche occupancy counts it correctly
             ))
 
             # Update the original post's comment count

@@ -1,6 +1,6 @@
 {
-    "num_users": 3,
-    "num_time_steps": 3,
+    "num_users": 20,
+    "num_time_steps": 6,
     "agent_config_generation": "file",
     "agent_config_path": "separate",
     "max_total_posts": 10000,
