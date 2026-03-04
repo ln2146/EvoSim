@@ -185,6 +185,7 @@ class PipelineContext:
     candidates: List[PostCandidate] = field(default_factory=list)
     post_timesteps: Dict[str, int] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    log_prefix: str = ""  # 日志前缀，用于多线程环境下追踪
 
     def add_metadata(self, key: str, value: Any):
         self.metadata[key] = value
