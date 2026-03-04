@@ -73,6 +73,12 @@ class HomophilyAnalysis:
             labels1 = json.loads(conn[1]) if conn[1] else {}
             labels2 = json.loads(conn[3]) if conn[3] else {}
             
+            # Handle both dict and list formats
+            if isinstance(labels1, list):
+                labels1 = {}
+            if isinstance(labels2, list):
+                labels2 = {}
+            
             # Get all unique attributes
             all_attributes = set(labels1.keys()) | set(labels2.keys())
             
@@ -148,6 +154,10 @@ class HomophilyAnalysis:
         cursor.execute("SELECT user_id, background_labels FROM users")
         for user in cursor.fetchall():
             labels = json.loads(user[1]) if user[1] else {}
+            # Handle both dict and list formats for labels
+            if isinstance(labels, list):
+                # Convert list to dict with None values
+                labels = {attr: None for attr in all_attributes}
             # Add node with all possible attributes (None if not present)
             node_attrs = {attr: labels.get(attr) for attr in all_attributes}
             G.add_node(user[0], **node_attrs)
@@ -209,7 +219,11 @@ class HomophilyAnalysis:
             cursor.execute("SELECT user_id, background_labels FROM users")
             for user in cursor.fetchall():
                 labels = json.loads(user[1]) if user[1] else {}
-                attribute_value = labels.get(attribute, 'Unknown')
+                # Handle both dict and list formats
+                if isinstance(labels, list):
+                    attribute_value = 'Unknown'
+                else:
+                    attribute_value = labels.get(attribute, 'Unknown')
                 G.add_node(user[0], attribute_value=attribute_value)
             
             # Add edges

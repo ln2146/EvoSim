@@ -1121,4 +1121,12 @@ if __name__ == "__main__":
     # Show final results
     print("\n✅ Simulation completed!")
     print("\n🎉 Thanks for using the social media simulation system!")
-    input("\nPress Enter to exit...")
+    try:
+        input("\nPress Enter to exit...")
+    except EOFError:
+        # 管道输入耗尽时（自动输入脚本执行完毕），保持终端打开不关闭
+        print("\n📋 Simulation finished. Terminal will remain open.")
+        print("📋 Press Ctrl+C to close this terminal.")
+        import time
+        while True:
+            time.sleep(1)  # 无限等待，保持终端打开
