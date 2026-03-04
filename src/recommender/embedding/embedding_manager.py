@@ -8,30 +8,37 @@ Embedding 管理器
 替代 X 算法的 Grok Transformer
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from threading import Lock
 from collections import OrderedDict
 import logging
 
 logger = logging.getLogger(__name__)
 
-# 全局单例实例和锁
-_embedding_manager_instance: 'EmbeddingManager' = None
+# 全局单例缓存和锁（按配置键缓存）
+_embedding_manager_instances: Dict[Tuple, 'EmbeddingManager'] = {}
 _embedding_manager_lock = Lock()
 
 
 def get_embedding_manager(**kwargs) -> 'EmbeddingManager':
     """
-    获取全局单例 EmbeddingManager 实例
+    获取全局单例 EmbeddingManager 实例（按配置键共享）
 
     线程安全，确保所有用户共享同一个模型实例
     """
-    global _embedding_manager_instance
-    if _embedding_manager_instance is None:
-        with _embedding_manager_lock:
-            if _embedding_manager_instance is None:
-                _embedding_manager_instance = EmbeddingManager(**kwargs)
-    return _embedding_manager_instance
+    key = (
+        kwargs.get('model_name', "paraphrase-MiniLM-L6-v2"),
+        bool(kwargs.get('cache_embeddings', True)),
+        int(kwargs.get('max_cache_size', 10000)),
+        bool(kwargs.get('use_openai_embedding', False)),
+        kwargs.get('openai_model_name')
+    )
+    with _embedding_manager_lock:
+        manager = _embedding_manager_instances.get(key)
+        if manager is None:
+            manager = EmbeddingManager(**kwargs)
+            _embedding_manager_instances[key] = manager
+        return manager
 
 
 class EmbeddingManager:
