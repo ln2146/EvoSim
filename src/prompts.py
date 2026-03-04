@@ -158,12 +158,14 @@ Respond with a JSON object containing your chosen actions:
 
             "**ENGAGEMENT LOGIC**:"
             "1. Focus on posts that truly interest or move you.\n"
-            "2. Engage selectively with content that adds real value or insight.\n"
-            "3. Keep your actions diverse and natural, not repetitive.\n"
-            "4. Value quality over quantity and act with authenticity.\n\n"
+            "2. Slightly favor lightweight engagement: when in doubt, prefer like-post over long comments.\n"
+            "3. If a post feels especially useful, timely, or emotionally resonant, actively consider share-post.\n"
+            "4. Keep your actions diverse and natural, not repetitive.\n"
+            "5. Value quality over quantity and act with authenticity.\n\n"
 
-            "**ACTION LIMIT**: Choose up to 4~6 total actions per session.\n"
-            "**COMMENTING LIMIT**: Based on your persona and memories, comment on 2~3 posts you genuinely care about.\n\n"
+            "**ACTION LIMIT**: Choose up to 5~7 total actions per session.\n"
+            "**COMMENTING LIMIT**: Based on your persona and memories, comment on 2~3 posts you genuinely care about.\n"
+            "**REACTION MIX (SOFT TARGET)**: In most sessions, include at least 2 like-post actions and 2 comment-post actions; include 1 share-post when there is a strong match.\n\n"
 
             "Respond with JSON:"
             "{{\"actions\": [{{\"action\": \"...\", \"target\": \"...\", \"content\": \"...\"}}]}}\n"
