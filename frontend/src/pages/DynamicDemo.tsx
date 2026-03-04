@@ -1858,7 +1858,7 @@ function AmplifierTroopGrid({
           </button>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         {troops.map((t) => {
           const isSelected = selectedTroopKey === t.key
           const isDimmed = anySelected && !isSelected
@@ -1876,12 +1876,9 @@ function AmplifierTroopGrid({
                 isDimmed ? 'opacity-40' : 'hover:brightness-95',
               ].join(' ')}
             >
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <span className="text-sm leading-none">{t.icon}</span>
-                <div className="flex items-baseline gap-1 min-w-0">
-                  <div className={['text-[11px] font-semibold', t.text].join(' ')}>{t.name}</div>
-                  <div className="text-[9px] text-slate-400 shrink-0">{t.subtitle}</div>
-                </div>
+              <div className="flex flex-col items-center gap-1 text-center">
+                <span className="text-base leading-none">{t.icon}</span>
+                <div className={['text-[11px] font-semibold', t.text].join(' ')}>{t.name}</div>
               </div>
               {t.isNew && isActive ? (
                 <div className="mt-1.5 flex items-center gap-1">
