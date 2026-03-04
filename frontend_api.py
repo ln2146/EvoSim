@@ -3456,6 +3456,36 @@ def set_auto_status_flag():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/analysis/post-comments', methods=['POST'])
+def proxy_analysis_post_comments():
+    """Proxy to main.py control server (port 8000) for post comment analysis"""
+    try:
+        import requests as req
+        data = request.get_json()
+        response = req.post(
+            'http://localhost:8000/analysis/post-comments',
+            json=data,
+            timeout=60
+        )
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/defense/dashboard', methods=['GET'])
+def proxy_defense_dashboard():
+    """Proxy to main.py control server (port 8000) for defense dashboard"""
+    try:
+        import requests as req
+        response = req.get(
+            'http://localhost:8000/api/defense/dashboard',
+            timeout=5
+        )
+        return jsonify(response.json()), response.status_code
+    except Exception:
+        return jsonify({'success': False}), 200
+
+
 # ============================================================================
 # 帖子热度榜功能
 # ============================================================================
