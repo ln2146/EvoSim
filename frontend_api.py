@@ -3474,16 +3474,27 @@ def proxy_analysis_post_comments():
 
 @app.route('/api/defense/dashboard', methods=['GET'])
 def proxy_defense_dashboard():
-    """Proxy to main.py control server (port 8000) for defense dashboard"""
+    """Read defense monitoring data directly from the simulation database."""
     try:
-        import requests as req
-        response = req.get(
-            'http://localhost:8000/api/defense/dashboard',
-            timeout=5
-        )
-        return jsonify(response.json()), response.status_code
-    except Exception:
-        return jsonify({'success': False}), 200
+        import importlib.util
+        _mod_path = os.path.join(BASE_DIR, 'src', 'agents', 'defense_monitoring_center.py')
+        _spec = importlib.util.spec_from_file_location('defense_monitoring_center', _mod_path)
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        create_monitoring_center = _mod.create_monitoring_center
+        db_path = os.path.join(BASE_DIR, 'database', 'simulation.db')
+        if not os.path.exists(db_path):
+            return jsonify({'success': False, 'error': 'simulation.db not found'}), 200
+        conn = sqlite3.connect(db_path)
+        try:
+            center = create_monitoring_center(top_n_topics=10)
+            center.sync_from_db(conn)
+            dashboard = center.generate_dashboard()
+        finally:
+            conn.close()
+        return jsonify({'success': True, 'dashboard': dashboard}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 200
 
 
 # ============================================================================
