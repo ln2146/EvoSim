@@ -45,6 +45,7 @@ except ImportError as e:
 app = Flask(__name__)
 CORS(app)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_DIR = 'database'
 OPINION_BALANCE_LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs', 'opinion_balance')
 WORKFLOW_LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs', 'workflow')
@@ -186,9 +187,9 @@ class ProcessManager:
         Returns:
             str: 批处理文件路径
         """
-        # 生成唯一的临时批处理文件名
+        # 生成唯一的临时批处理文件名（使用绝对路径，避免新终端找不到）
         timestamp = int(time.time())
-        bat_file = f"temp_input_{timestamp}.bat"
+        bat_file = os.path.join(BASE_DIR, f"temp_input_{timestamp}.bat")
         
         with open(bat_file, 'w', encoding='utf-8') as f:
             # 不需要激活 conda 环境，直接使用当前 Python 解释器
@@ -196,6 +197,7 @@ class ProcessManager:
             
             # 写入自动输入命令
             f.write('@echo off\n')
+            f.write(f'cd /d "{BASE_DIR}"\n')
             f.write('(\n')
             for inp in inputs:
                 if inp == '':  # 空字符串表示回车
@@ -235,12 +237,12 @@ class ProcessManager:
             # 创建临时批处理文件（包含 exit 命令）
             bat_file = self._create_auto_input_script(script_path, auto_inputs, conda_env)
             # 使用 Windows Terminal (wt) 启动，速度更快
-            # -w 0: 新窗口, -t: 标题, --: 后面是要执行的命令
-            cmd = f'wt -w 0 -t "{title}" -- cmd /k "{bat_file}"'
+            # -w 0: 新窗口, new-tab --title: 标题, --: 后面是要执行的命令
+            cmd = f'wt -w 0 new-tab --title "{title}" -- cmd /k "{bat_file}"'
         else:
             # 直接启动，使用当前 Python 解释器
             # 使用 Windows Terminal (wt) 启动，速度更快
-            cmd = f'wt -w 0 -t "{title}" -- cmd /k ""{self.python_exe}" {script_path} & pause"'
+            cmd = f'wt -w 0 new-tab --title "{title}" -- cmd /k "cd /d "{BASE_DIR}" && "{self.python_exe}" {script_path} & pause"'
 
         process = subprocess.Popen(cmd, shell=True)
         return process
@@ -319,7 +321,7 @@ class ProcessManager:
 
             # 启动数据库服务（如果尚未运行）
             if not db_running:
-                db_script = 'src/start_database_service.py'
+                db_script = os.path.join(BASE_DIR, 'src', 'start_database_service.py')
                 if not os.path.exists(db_script):
                     return {
                         'success': False,
@@ -335,7 +337,7 @@ class ProcessManager:
                 )
 
             # 立即启动主程序（不等待数据库）
-            main_script = 'src/main.py'
+            main_script = os.path.join(BASE_DIR, 'src', 'main.py')
             if not os.path.exists(main_script):
                 return {
                     'success': False,
@@ -487,7 +489,7 @@ class ProcessManager:
                 }
             
             # 启动舆论平衡启动器
-            ob_script = 'src/opinion_balance_launcher.py'
+            ob_script = os.path.join(BASE_DIR, 'src', 'opinion_balance_launcher.py')
             if not os.path.exists(ob_script):
                 return {
                     'success': False,
