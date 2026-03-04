@@ -820,12 +820,17 @@ class SimpleStrategistAgent:
 
             DYNAMIC PARAMETER DETERMINATION:
             - You MUST fully determine all output values yourself; do NOT use example numbers or placeholders
-            - Determine the optimal number of agents within a fixed range:
-              
-              AGENT COUNT RANGE:
-              * Total number of agents should be between 8 and 15 (inclusive)
-              * Select a specific number within this range based on the situation severity
-              
+            - Determine the optimal number of agents dynamically based on the situation:
+
+              AGENT COUNT GUIDELINES (no fixed range - judge based on context):
+              * Urgency level 4 (critical) or extremism > 0.8: consider 15-20 agents
+              * Urgency level 3 or extremism 0.6-0.8: consider 12-15 agents
+              * Urgency level 2 or extremism 0.4-0.6: consider 8-12 agents
+              * Urgency level 1 or extremism < 0.4: consider 5-8 agents
+              * Also factor in comment volume: more comments → more agents for coverage
+              * Use historical success patterns to calibrate - if past similar situations
+                succeeded with fewer agents, do not over-deploy
+
             - Decide role distribution (balanced_moderates, technical_experts, community_voices, fact_checkers) based on content analysis, risk assessment, and heat level
             - Choose timing strategy (immediate/staggered/progressive) based on urgency and heat level
             - Provide concrete coordination instructions and risk assessments
@@ -2365,8 +2370,8 @@ Generate 3-5 diverse strategy options as JSON array."""
                 "technical_experts": 1
             }
         
-        # Generate specific instructions
-        for i in range(min(agent_count, 8)):  # Limit to at most 8
+        # Generate specific instructions - use strategist-determined count directly
+        for i in range(agent_count):
             role_types = list(role_distribution.keys())
             role_type = role_types[i % len(role_types)]
             
@@ -6188,27 +6193,23 @@ class SimpleCoordinationSystem:
             # Check whether intervention is needed
             if success_achieved is False:
                 workflow_logger.info(f"  🚨 {'Baseline' if is_baseline else f'Round {monitoring_count}'} report indicates intervention needed...")
-                
+
                 # Construct alert object from feedback report
                 alert = self._construct_alert_from_report(feedback_report, task)
                 if not alert:
                     workflow_logger.warning("  ⚠️ Failed to construct alert object, skipping intervention")
-                    continue
-                
-                # Execute intervention and update baseline data
-                try:
-                    intervention_result = await self._execute_intervention_from_alert(alert, task)
-                    if intervention_result is None:
-                        workflow_logger.warning("  ⚠️ Intervention execution returned None")
-                        continue
-                except Exception as e:
-                    workflow_logger.warning(f"  ⚠️ Intervention execution error: {e}")
-                    continue
-                
-                if intervention_result.get("success"):
-                    workflow_logger.info(f"  ✅ {'Baseline' if is_baseline else f'Round {monitoring_count}'} intervention executed successfully")
                 else:
-                    workflow_logger.warning(f"  ⚠️ {'Baseline' if is_baseline else f'Round {monitoring_count}'} intervention execution failed: {intervention_result.get('error', 'unknown error')}")
+                    # Execute intervention and update baseline data
+                    try:
+                        intervention_result = await self._execute_intervention_from_alert(alert, task)
+                        if intervention_result is None:
+                            workflow_logger.warning("  ⚠️ Intervention execution returned None")
+                        elif intervention_result.get("success"):
+                            workflow_logger.info(f"  ✅ {'Baseline' if is_baseline else f'Round {monitoring_count}'} intervention executed successfully")
+                        else:
+                            workflow_logger.warning(f"  ⚠️ {'Baseline' if is_baseline else f'Round {monitoring_count}'} intervention execution failed: {intervention_result.get('error', 'unknown error')}")
+                    except Exception as e:
+                        workflow_logger.warning(f"  ⚠️ Intervention execution error: {e}")
             else:
                 workflow_logger.info(f"  ✅ {'Baseline' if is_baseline else f'Round {monitoring_count}'} report shows no intervention needed, continue monitoring...")
             
@@ -6521,13 +6522,15 @@ class SimpleCoordinationSystem:
             
             if not content_result_1 or not content_result_1.get("success", False):
                 error_msg = content_result_1.get('error', 'content generation failed') if content_result_1 else 'content generation returned None'
-                return {"success": False, "error": f"First leader content generation failed: {error_msg}", "action_id": action_id}
-            
-            leader_content_1 = content_result_1["content"]
-            final_content_1 = leader_content_1.get("final_content", "")
-            leader_model_1 = leader_content_1.get("selected_model", "unknown")
-            workflow_logger.info("✅ First leader core content generated")
-            workflow_logger.info(f"💬 👑 First leader ({leader_model_1}) commented on post {target_post_id_clean}: {final_content_1}")
+                workflow_logger.warning(f"⚠️ First leader content generation failed: {error_msg}, falling back to strategy context")
+                final_content_1 = strategy.get("core_counter_argument", content_text)
+                leader_model_1 = "fallback"
+            else:
+                leader_content_1 = content_result_1["content"]
+                final_content_1 = leader_content_1.get("final_content", "")
+                leader_model_1 = leader_content_1.get("selected_model", "unknown")
+                workflow_logger.info("✅ First leader core content generated")
+                workflow_logger.info(f"💬 👑 First leader ({leader_model_1}) commented on post {target_post_id_clean}: {final_content_1}")
             
             # Second leader uses LLM to generate content
             workflow_logger.info("🎯 Second leader agent starts generating content...")
