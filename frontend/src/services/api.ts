@@ -522,16 +522,16 @@ export const getEchoChamberUsers = async (
 // 帖子派系分布类型
 export interface PostFactionData {
   post_id: string
-  total_comments: number
+  total_comments?: number
   total_likes?: number
-  total_interactions?: number
-  support_count: number
-  neutral_count: number
-  oppose_count: number
+  total_interactions: number
+  support_count?: number
+  neutral_count?: number
+  oppose_count?: number
   support_ratio: number
   neutral_ratio: number
   oppose_ratio: number
-  top_commenters: [string, string][]
+  top_commenters?: [string, string][]
   like_count?: number
   support_by_like?: number
   avg_influence_score?: number
@@ -539,6 +539,7 @@ export interface PostFactionData {
   high_influence_users?: Array<{ user_id: string; score: number; stance: string }>
   high_bubble_users_count?: number
   high_bubble_support_ratio?: number
+  is_hottest?: boolean
 }
 
 export interface PostFactionsSummary {
@@ -548,6 +549,15 @@ export interface PostFactionsSummary {
   avg_oppose_ratio: number
   avg_influence_score?: number
   high_bubble_support_ratio?: number
+  hottest_post?: {
+    post_id: string
+    total_interactions: number
+    support_ratio: number
+    neutral_ratio: number
+    oppose_ratio: number
+    high_influence_users?: Array<{ user_id: string; score: number; stance: string }>
+    high_bubble_support_ratio: number
+  }
   most_divisive_post: {
     post_id: string
     support_ratio: number
@@ -567,14 +577,15 @@ export interface PostFactionsSummary {
     avg_influence_score: number
     total_interactions: number
   }
-  post_factions: PostFactionData[]
+  post_stances: PostFactionData[]
+  post_factions?: PostFactionData[]
   analysis_type?: 'enhanced' | 'basic'
 }
 
 // 获取帖子派系分布
 export const getPostFactions = async (
   dbName: string,
-  limit: number = 50,
+  limit: number = 15,
   minComments: number = 3
 ): Promise<PostFactionsSummary | null> => {
   try {
