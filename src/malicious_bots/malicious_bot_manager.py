@@ -18,6 +18,17 @@ from .simple_malicious_agent import SimpleMaliciousCluster, MaliciousPersona
 from .config import MaliciousBotConfig, DEFAULT_CONFIG
 from .attack_orchestrator import AttackOrchestrator
 
+
+def _build_comment_moderation_feedback(
+    violation_count: int,
+    ban_threshold: int = 3
+) -> tuple:
+    """Return (is_banned, feedback_message) for comment moderation outcomes."""
+    if violation_count >= ban_threshold:
+        return True, f"评论违规累计 {violation_count}/{ban_threshold}，账号已封禁。"
+    return False, f"评论包含违规关键词，已拦截。当前累计 {violation_count}/{ban_threshold}。"
+
+
 class MaliciousBotManager:
     """Manages scheduled malicious bot activity and supporting utilities."""
     
@@ -37,7 +48,10 @@ class MaliciousBotManager:
         self.subsequent_attack_interval = None
         self.malicious_prefix = ""  # Remove obvious prefix to make malicious comments less obvious
         self.fake_news_attack_size = self.config.get("fake_news_attack_size", self.cluster_size)
-       
+        self.comment_ban_threshold = 3
+        self._comment_keyword_provider = None
+        self._ban_exempt_users = set()
+
         # 始终初始化 bot_cluster，不管配置如何
         # 实际的执行控制由 control_flags.attack_enabled 在运行时决定
         self.bot_cluster = SimpleMaliciousCluster(self.cluster_size)
@@ -49,12 +63,109 @@ class MaliciousBotManager:
         self.orchestrator = AttackOrchestrator(self.bot_cluster, self.bot_config)
 
         self._create_database_tables()
+        self._init_comment_moderation_policy()
         logging.info(f"🔥 Malicious bot manager initialized with cluster size: {self.cluster_size}")
         logging.info(f"   Coordination mode: {self.bot_config.coordination_mode.value}")
         logging.info(f"   Runtime control via control_flags.attack_enabled")
         print(f"Malicious bot cluster initialized. Cluster size: {self.cluster_size}")
         print(f"   Coordination mode: {self.bot_config.coordination_mode.value}")
         print(f"💡 Note: Actual attack execution is controlled by control_flags.attack_enabled")
+
+    def _init_comment_moderation_policy(self):
+        """Initialize keyword moderation provider and ban exemption list."""
+        try:
+            from moderation.config import ModerationConfig
+            from moderation.providers.keyword_provider import KeywordProvider
+
+            cfg = ModerationConfig()
+            keyword_cfg = cfg.keyword_provider
+            keyword_cfg.enabled = True
+            self._comment_keyword_provider = KeywordProvider(keyword_cfg)
+            self._ban_exempt_users = set(getattr(cfg.actions, "ban_exempt_users", []) or [])
+        except Exception as e:
+            logging.error(f"Failed to initialize malicious comment moderation policy: {e}")
+            self._comment_keyword_provider = None
+            self._ban_exempt_users = set()
+
+    def _check_comment_policy_violation(
+        self,
+        cursor,
+        user_id: str,
+        post_id: str,
+        comment_id: str,
+        content: str
+    ) -> bool:
+        """
+        Return True if the comment should be blocked by moderation policy.
+        Exempt users bypass this comment policy.
+        """
+        if user_id in self._ban_exempt_users:
+            return False
+
+        cursor.execute(
+            'SELECT status, comment_violation_count FROM users WHERE user_id = ?',
+            (user_id,)
+        )
+        user_state = cursor.fetchone()
+        status = user_state[0] if user_state else "active"
+
+        if status == "banned":
+            logging.warning(f"Malicious user {user_id} is banned; comment blocked.")
+            return True
+
+        if not self._comment_keyword_provider:
+            return False
+
+        verdict = self._comment_keyword_provider.check(
+            content,
+            metadata={"target_type": "comment", "post_id": post_id, "comment_id": comment_id}
+        )
+        if verdict is None:
+            return False
+
+        cursor.execute(
+            '''
+            UPDATE users
+            SET comment_violation_count = COALESCE(comment_violation_count, 0) + 1
+            WHERE user_id = ?
+            ''',
+            (user_id,)
+        )
+        cursor.execute(
+            'SELECT comment_violation_count FROM users WHERE user_id = ?',
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        violation_count = int((row[0] if row else 0) or 0)
+        is_banned, feedback = _build_comment_moderation_feedback(
+            violation_count,
+            self.comment_ban_threshold
+        )
+
+        if is_banned:
+            cursor.execute(
+                '''
+                UPDATE users
+                SET status = 'banned',
+                    ban_reason = ?,
+                    banned_at = CURRENT_TIMESTAMP
+                WHERE user_id = ?
+                ''',
+                ("comment_keyword_violations", user_id)
+            )
+
+        cursor.execute(
+            '''
+            INSERT INTO user_actions (user_id, action_type, target_id, content)
+            VALUES (?, ?, ?, ?)
+            ''',
+            (user_id, 'moderation_warning', comment_id, feedback)
+        )
+        logging.warning(
+            f"Malicious comment blocked for user {user_id}: {feedback} "
+            f"(keywords={getattr(verdict, 'detected_keywords', [])})"
+        )
+        return True
     
     def _create_database_tables(self):
         """Create and validate tables that support the malicious bot workflows."""
@@ -407,6 +518,16 @@ Write your hostile post:"""
 
             # Prepare batch insertion data
             selected_model = attack.get("model_used", "unknown")
+
+            # Apply the same comment moderation policy to non-exempt users.
+            if self._check_comment_policy_violation(
+                cursor=cursor,
+                user_id=malicious_user_id,
+                post_id=post_id,
+                comment_id=comment_id,
+                content=content
+            ):
+                continue
 
             # Comment data
             comment_data = (
@@ -989,7 +1110,6 @@ Write your hostile post:"""
         # The top posts are re-evaluated every timestep and attacked if they satisfy the conditions
 
         return True
-
 
 
 
