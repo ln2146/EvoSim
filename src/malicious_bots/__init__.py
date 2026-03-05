@@ -11,5 +11,14 @@ Public API:
 
 from .malicious_bot_manager import MaliciousBotManager
 from .simple_malicious_agent import SimpleMaliciousCluster, MaliciousPersona
+from .bot_role_overlay import BotRole, RoleOverlay, assign_bot_roles, get_role_overlay
 
-__all__ = ["MaliciousBotManager", "SimpleMaliciousCluster", "MaliciousPersona"]
+__all__ = [
+    "MaliciousBotManager",
+    "SimpleMaliciousCluster",
+    "MaliciousPersona",
+    "BotRole",
+    "RoleOverlay",
+    "assign_bot_roles",
+    "get_role_overlay",
+]

@@ -101,8 +101,17 @@ class SimpleMaliciousCluster:
                 cleaned.append(stripped)
         return "; ".join(cleaned)
 
-    def _build_malicious_comment_prompt(self, persona: MaliciousPersona, target_content: str) -> str:
-        """Build the malicious comment prompt consistently"""
+    def _build_malicious_comment_prompt(self, persona: MaliciousPersona, target_content: str, role_overlay=None) -> str:
+        """Build the malicious comment prompt consistently.
+
+        Args:
+            persona     : MaliciousPersona 实例，提供角色背景信息
+            target_content: 目标帖子内容
+            role_overlay: 可选的 RoleOverlay 实例。若提供，则用 role_overlay.prompt_override
+                          替换默认的 CONTENT GUIDELINES / MISSION 段落，实现战术角色分化。
+        """
+        from .bot_role_overlay import RoleOverlay as _RoleOverlay
+
         persona_details = []
         if persona.name:
             persona_details.append(f"Name: {persona.name}")
@@ -134,7 +143,16 @@ class SimpleMaliciousCluster:
 
         persona_section = "\n".join(f"- {item}" for item in persona_details) if persona_details else "- Undefined persona context"
 
-        prompt = f"""Persona Context:
+        # 若传入 role_overlay，用战术角色专属提示词替换默认的 MISSION 段落
+        if isinstance(role_overlay, _RoleOverlay):
+            prompt = f"""Persona Context:
+{persona_section}
+
+Target Post: "{target_content[:200]}"
+
+{role_overlay.prompt_override}"""
+        else:
+            prompt = f"""Persona Context:
 {persona_section}
 
 Target Post: "{target_content[:200]}"
@@ -701,8 +719,14 @@ Response:"""
             logger.error(f"❌ Creating malicious agents failed: {e}")
             return []
     
-    async def generate_cluster_response(self, target_content: str, agent_count: int, context: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Generate cluster response using parallel async tasks; agent count comes from configuration"""
+    async def generate_cluster_response(self, target_content: str, agent_count: int, context: Dict[str, Any] = None, role_overlays: List = None) -> List[Dict[str, Any]]:
+        """Generate cluster response using parallel async tasks; agent count comes from configuration.
+
+        Args:
+            role_overlays: 可选的 RoleOverlay 列表，长度应与 agent_count 对齐。
+                           由 assign_bot_roles() 返回的第二元素列表传入。
+                           若为 None，则所有 agent 使用默认提示词（向后兼容）。
+        """
         try:
             # Create agents
             agents = self.create_malicious_agents(agent_count)
@@ -711,10 +735,11 @@ Response:"""
             # Create parallel tasks
             tasks = []
             for i, agent in enumerate(agents):
-                persona = agent["persona"]
+                # 若提供 role_overlays 且索引有效，则传入对应的 RoleOverlay
+                role_overlay = role_overlays[i] if role_overlays and i < len(role_overlays) else None
 
                 # Create an async task for each agent
-                task = self._async_generate_single_response(agent, target_content)
+                task = self._async_generate_single_response(agent, target_content, role_overlay)
                 tasks.append(task)
 
 
@@ -770,12 +795,18 @@ Response:"""
             logger.error(f"Error details: {traceback.format_exc()}")
             return []
 
-    async def _async_generate_single_response(self, agent: Dict, target_content: str) -> Dict[str, Any]:
-        """Generate a single agent response asynchronously"""
+    async def _async_generate_single_response(self, agent: Dict, target_content: str, role_overlay=None) -> Dict[str, Any]:
+        """Generate a single agent response asynchronously.
+
+        Args:
+            role_overlay: 可选的 RoleOverlay 实例。若提供，则使用角色专属提示词和 fallback 回复。
+        """
         persona = agent["persona"]
         try:
             # Use asyncio.to_thread to run the synchronous LLM call and grab model info
-            content, model_used = await asyncio.to_thread(self._sync_llm_call_with_model_info, persona, target_content)
+            content, model_used = await asyncio.to_thread(
+                self._sync_llm_call_with_model_info, persona, target_content, role_overlay
+            )
 
             if content and len(content.strip()) > 3:
                 response = {
@@ -789,18 +820,26 @@ Response:"""
                     "model_used": model_used,
                     "generated_at": datetime.now().isoformat()
                 }
+                # 附加角色元数据，供审核分析模块使用
+                if role_overlay is not None:
+                    response["bot_role"] = role_overlay.role.value
+                    response["disguise_level"] = role_overlay.disguise_level
                 return response
             else:
-                # Use a highly aggressive fallback
-                fallback_responses = [
-                    "This is total bullshit designed to screw over regular people.",
-                    "What garbage propaganda from idiots who believe every lie.",
-                    "This proves everything is corrupted and rigged - wake up fools.",
-                    "Another catastrophic lie designed to keep you enslaved forever.",
-                    "This toxic nonsense is why our civilization is collapsing.",
-                    "Stop spreading these dangerous lies that are killing people."
-                ]
-                fallback_content = random.choice(fallback_responses)
+                # 优先使用角色专属 fallback，否则使用通用 fallback
+                if role_overlay is not None and role_overlay.fallback_responses:
+                    fallback_content = random.choice(role_overlay.fallback_responses)
+                else:
+                    generic_fallbacks = [
+                        "This is total bullshit designed to screw over regular people.",
+                        "What garbage propaganda from idiots who believe every lie.",
+                        "This proves everything is corrupted and rigged - wake up fools.",
+                        "Another catastrophic lie designed to keep you enslaved forever.",
+                        "This toxic nonsense is why our civilization is collapsing.",
+                        "Stop spreading these dangerous lies that are killing people."
+                    ]
+                    fallback_content = random.choice(generic_fallbacks)
+
                 response = {
                     "agent_id": agent["agent_id"],
                     "content": fallback_content,
@@ -812,12 +851,14 @@ Response:"""
                     "model_used": "fallback_async",
                     "generated_at": datetime.now().isoformat()
                 }
+                if role_overlay is not None:
+                    response["bot_role"] = role_overlay.role.value
+                    response["disguise_level"] = role_overlay.disguise_level
                 logger.info(f"🛡️ Persona {persona.name} used fallback: {fallback_content}")
                 return response
 
         except Exception as e:
             logger.error(f"❌ Persona {persona.name} failed to generate response: {e}")
-            # Even on failure, add a fallback to keep the attack complete
             fallback_content = "This is total garbage that shows how screwed up everything has become."
             response = {
                 "agent_id": agent["agent_id"],
@@ -830,6 +871,9 @@ Response:"""
                 "model_used": "error_fallback",
                 "generated_at": datetime.now().isoformat()
             }
+            if role_overlay is not None:
+                response["bot_role"] = role_overlay.role.value
+                response["disguise_level"] = role_overlay.disguise_level
             logger.info(f"🛡️ Persona {persona.name} error fallback: {fallback_content}")
             return response
 
@@ -896,14 +940,18 @@ Response:"""
                 pass
             return ""
 
-    def _sync_llm_call_with_model_info(self, persona: MaliciousPersona, target_content: str) -> tuple[str, str]:
-        """Synchronous LLM call that returns both content and model name"""
+    def _sync_llm_call_with_model_info(self, persona: MaliciousPersona, target_content: str, role_overlay=None) -> tuple[str, str]:
+        """Synchronous LLM call that returns both content and model name.
+
+        Args:
+            role_overlay: 可选的 RoleOverlay 实例，若提供则传入提示词构建函数以替换战术段落。
+        """
         try:
             # Obtain the model client
             client, model_name = self.model_selector.create_langchain_client()
 
-            # Dynamically craft the prompt
-            prompt = self._build_malicious_comment_prompt(persona, target_content)
+            # Dynamically craft the prompt（支持战术角色覆盖）
+            prompt = self._build_malicious_comment_prompt(persona, target_content, role_overlay)
 
             # Call the LLM directly with parameters tuned for complete generation
             try:
@@ -975,15 +1023,22 @@ Response:"""
             "model_stats": self.model_selector.get_usage_stats()
         }
 
-    async def coordinate_attack(self, target_post_id: str, target_content: str, attack_size: int) -> List[Dict[str, Any]]:
-        """Coordinate an attack; agent count is determined by configuration"""
+    async def coordinate_attack(self, target_post_id: str, target_content: str, attack_size: int, role_overlays: List = None) -> List[Dict[str, Any]]:
+        """Coordinate an attack; agent count is determined by configuration.
+
+        Args:
+            role_overlays: 可选的 RoleOverlay 列表，由上层策略（SwarmStrategy / DispersedStrategy
+                           / ChainStrategy）通过 assign_bot_roles() 生成后传入。
+                           若为 None，则退化为原有行为（向后兼容）。
+        """
         try:
 
             # Generate cluster responses by awaiting the async method
             responses = await self.generate_cluster_response(
                 target_content=target_content,
                 agent_count=attack_size,
-                context={"target_post_id": target_post_id}
+                context={"target_post_id": target_post_id},
+                role_overlays=role_overlays,
             )
 
             return responses
