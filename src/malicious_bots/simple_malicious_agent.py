@@ -46,7 +46,7 @@ class SimpleMaliciousCluster:
         """Load negative personas from the database"""
         try:
             import os
-            personas_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 
+            personas_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
                                        'personas', 'negative_personas_database.json')
             
             with open(personas_file, 'r', encoding='utf-8') as f:

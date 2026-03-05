@@ -4,6 +4,7 @@ Implements complete three-phase workflow without LangGraph dependency
 """
 
 import asyncio
+import contextvars
 import json
 import os
 import random
@@ -13,6 +14,13 @@ import sys
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# Per-task log buffer: when set to a list, workflow_logger writes into the list
+# instead of the file. Phase 2 in simulation.py flushes each buffer to the
+# file in post order, so the SSE stream is always sequential.
+_workflow_log_buffer: contextvars.ContextVar[Optional[list]] = contextvars.ContextVar(
+    'workflow_log_buffer', default=None
+)
 
 try:
     from src.action_logs_store import ActionLogRecord, persist_action_log_record
@@ -53,37 +61,56 @@ except ImportError:
             execute_with_temp_connection = database_manager.execute_with_temp_connection
 
 # Configure workflow-specific logging
+class _ContextAwareFileHandler(logging.FileHandler):
+    """FileHandler that diverts records to the per-task context buffer when one is set.
+
+    When _workflow_log_buffer holds a list (inside a buffered task), log records are
+    formatted and appended to that list instead of being written to the file.
+    When no buffer is set (normal / outer context), records go to the file as usual.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        buf = _workflow_log_buffer.get(None)
+        if buf is not None:
+            try:
+                buf.append(self.format(record))
+            except Exception:
+                self.handleError(record)
+        else:
+            super().emit(record)
+
+
 def setup_workflow_logger():
     """Set up workflow-specific logger."""
     # Ensure logs/workflow directory exists - fix path
     script_dir = Path(__file__).parent.parent.parent  # Public-opinion-balance directory
     workflow_log_dir = script_dir / "logs" / "workflow"
     workflow_log_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create workflow-specific logger
     workflow_logger = logging.getLogger('workflow')
     workflow_logger.setLevel(logging.INFO)
-    
+
     # Disable propagation to parent logger to avoid terminal output
     workflow_logger.propagate = False
-    
+
     # Avoid adding duplicate handlers
     if not workflow_logger.handlers:
-        # Create file handler using absolute path
+        # Use context-aware handler so parallel tasks buffer their own logs
         log_file = workflow_log_dir.absolute() / f"workflow_{datetime.now().strftime('%Y%m%d')}.log"
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
+        file_handler = _ContextAwareFileHandler(log_file, encoding='utf-8')
         file_handler.setLevel(logging.INFO)
-        
+
         # Create formatter
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
-        
+
         # Add handler
         workflow_logger.addHandler(file_handler)
-        
+
         # Ensure log file is created
         workflow_logger.info(f"📁 Workflow log file: {log_file}")
-    
+
     return workflow_logger
 
 # Initialize workflow logger

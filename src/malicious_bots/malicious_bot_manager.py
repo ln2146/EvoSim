@@ -13,11 +13,8 @@ import hashlib
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-# Simplified import path for the malicious agent modules
-import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from simple_malicious_agent import SimpleMaliciousCluster, MaliciousPersona
+from .simple_malicious_agent import SimpleMaliciousCluster, MaliciousPersona
 
 class MaliciousBotManager:
     """Manages scheduled malicious bot activity and supporting utilities."""
