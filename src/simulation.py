@@ -170,7 +170,7 @@ class Simulation:
         # control_flags.attack_enabled, so we always construct the
         # manager when possible and let the global flag decide.
         try:
-            from malicious_bot_manager import MaliciousBotManager
+            from malicious_bots.malicious_bot_manager import MaliciousBotManager
             self.malicious_bot_manager = MaliciousBotManager(config, self.db_manager)
         except Exception as e:
             logging.error(f"Failed to initialize MaliciousBotManager: {e}")
