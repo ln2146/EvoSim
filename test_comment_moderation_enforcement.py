@@ -14,6 +14,10 @@ from agent_user import AgentUser
 
 
 class CommentModerationEnforcementTest(unittest.TestCase):
+    def setUp(self):
+        AgentUser._comment_keyword_provider = None
+        AgentUser._comment_keyword_signature = None
+
     class _ImmediateFuture:
         def __init__(self, value):
             self._value = value
@@ -169,6 +173,40 @@ class CommentModerationEnforcementTest(unittest.TestCase):
         self.assertIsNone(user.last_comment_moderation_message)
         sql_text = "\n".join(call.args[0] for call in mock_exec.call_args_list if call.args)
         self.assertNotIn("DELETE FROM comments", sql_text)
+
+    def test_keyword_provider_should_be_reused_across_comments(self):
+        user = self._make_user()
+
+        # Ensure test isolation for class-level provider cache.
+        if hasattr(AgentUser, "_comment_keyword_provider"):
+            AgentUser._comment_keyword_provider = None
+        if hasattr(AgentUser, "_comment_keyword_signature"):
+            AgentUser._comment_keyword_signature = None
+
+        fetch_one_side_effect = [
+            {"status": "active", "comment_violation_count": 0},
+            {"author_id": "post-author", "content": "post content"},
+            {"status": "active", "comment_violation_count": 0},
+            {"author_id": "post-author", "content": "post content"},
+        ]
+
+        with patch("agent_user.fetch_one", side_effect=fetch_one_side_effect), \
+             patch("agent_user.execute_query", return_value=True), \
+             patch("agent_user.Utils.generate_formatted_id", side_effect=["comment-005", "comment-006"]), \
+             patch("agent_user.fetch_all", return_value=[]), \
+             patch.object(control_flags, "moderation_enabled", True), \
+             patch("moderation.providers.keyword_provider.KeywordProvider") as mock_provider_cls, \
+             patch("concurrent.futures.ThreadPoolExecutor", return_value=self._ImmediateExecutor()), \
+             patch("asyncio.create_task", side_effect=self._safe_create_task):
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.check.return_value = None
+
+            first = user.create_comment("post-1", "hello once")
+            second = user.create_comment("post-1", "hello twice")
+
+        self.assertEqual("comment-005", first)
+        self.assertEqual("comment-006", second)
+        self.assertEqual(1, mock_provider_cls.call_count)
 
 
 if __name__ == "__main__":

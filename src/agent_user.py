@@ -137,6 +137,33 @@ class AgentUser:
     MEMORY_TYPE_INTERACTION = 'interaction'
     MEMORY_TYPE_REFLECTION = 'reflection'
     VALID_MEMORY_TYPES = {MEMORY_TYPE_INTERACTION, MEMORY_TYPE_REFLECTION}
+    _comment_keyword_provider = None
+    _comment_keyword_signature = None
+
+    @classmethod
+    def _build_comment_keyword_signature(cls, keyword_cfg) -> str:
+        return json.dumps(
+            {
+                "enabled": bool(getattr(keyword_cfg, "enabled", True)),
+                "threshold": getattr(keyword_cfg, "threshold", None),
+                "keywords": getattr(keyword_cfg, "keywords", {}),
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+
+    @classmethod
+    def _get_comment_keyword_provider(cls):
+        from moderation.config import ModerationConfig
+        from moderation.providers.keyword_provider import KeywordProvider
+
+        keyword_cfg = ModerationConfig().keyword_provider
+        keyword_cfg.enabled = True
+        signature = cls._build_comment_keyword_signature(keyword_cfg)
+        if cls._comment_keyword_provider is None or cls._comment_keyword_signature != signature:
+            cls._comment_keyword_provider = KeywordProvider(keyword_cfg)
+            cls._comment_keyword_signature = signature
+        return cls._comment_keyword_provider
 
     def __init__(
         self,
@@ -535,12 +562,7 @@ class AgentUser:
         try:
             import control_flags
             if control_flags.moderation_enabled:
-                from moderation.config import ModerationConfig
-                from moderation.providers.keyword_provider import KeywordProvider
-
-                keyword_cfg = ModerationConfig().keyword_provider
-                keyword_cfg.enabled = True
-                verdict = KeywordProvider(keyword_cfg).check(
+                verdict = self._get_comment_keyword_provider().check(
                     final_content,
                     metadata={"target_type": "comment", "post_id": post_id, "comment_id": comment_id}
                 )
