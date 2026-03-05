@@ -1316,8 +1316,15 @@ class Simulation:
 
             if comment_content:
                 comment_id = user.create_comment(post.post_id, comment_content)
-                print(f"👤 User {user.user_id} concurrently commented on post {post.post_id} (model: {selected_model})")
-                return {"success": True, "comment_id": comment_id, "model": selected_model}
+                if comment_id:
+                    print(f"👤 User {user.user_id} concurrently commented on post {post.post_id} (model: {selected_model})")
+                    return {"success": True, "comment_id": comment_id, "model": selected_model}
+
+                warning_msg = getattr(user, "last_comment_moderation_message", None)
+                if warning_msg:
+                    print(f"⚠️ User {user.user_id} comment blocked: {warning_msg}")
+                    return {"success": False, "error": warning_msg}
+                return {"success": False, "error": "comment blocked"}
             else:
                 return {"success": False, "error": "comment generation failed"}
 

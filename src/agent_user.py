@@ -106,6 +106,16 @@ class FeedReaction(BaseModel):
     actions: List[FeedAction]
 
 
+def build_comment_moderation_feedback(
+    violation_count: int,
+    ban_threshold: int = 3
+) -> tuple:
+    """Return (is_banned, feedback_message) for comment moderation outcomes."""
+    if violation_count >= ban_threshold:
+        return True, f"评论违规累计 {violation_count}/{ban_threshold}，账号已封禁。"
+    return False, f"评论包含违规关键词，已拦截。当前累计 {violation_count}/{ban_threshold}。"
+
+
 class AgentUser:
     """
     An LLM agent in the simulation.
@@ -237,6 +247,7 @@ class AgentUser:
         # Remove comment limit; allow unlimited comments
         self.comment_limit = float('inf')  # Unlimited
         self.comment_count = 0
+        self.last_comment_moderation_message = None
 
         # Initialize X-Algorithm recommender system
         self._feed_pipeline = None
@@ -424,6 +435,18 @@ class AgentUser:
         """
         Create a comment on a post and update the post's comment count.
         """
+        self.last_comment_moderation_message = None
+
+        # Block banned users from commenting.
+        user_state = fetch_one(
+            'SELECT status, comment_violation_count FROM users WHERE user_id = ?',
+            (self.user_id,)
+        )
+        if user_state and user_state.get('status') == 'banned':
+            self.last_comment_moderation_message = "账号已封禁，无法继续评论。"
+            logging.warning(f"User {self.user_id} is banned; comment blocked.")
+            return None
+
         comment_id = Utils.generate_formatted_id("comment")
 
         # Get post author and content for diversity enhancement
@@ -506,6 +529,74 @@ class AgentUser:
             WHERE user_id = ?
         ''', (post_author,))
         # Logging moved to _process_reaction method
+
+        # Immediate keyword moderation for comments:
+        # publish first, then revoke + warn user if sensitive keywords are detected.
+        try:
+            from moderation.config import ModerationConfig
+            from moderation.providers.keyword_provider import KeywordProvider
+
+            keyword_cfg = ModerationConfig().keyword_provider
+            keyword_cfg.enabled = True
+            verdict = KeywordProvider(keyword_cfg).check(
+                final_content,
+                metadata={"target_type": "comment", "post_id": post_id, "comment_id": comment_id}
+            )
+
+            if verdict is not None:
+                # Revoke the comment immediately.
+                execute_query('DELETE FROM comments WHERE comment_id = ?', (comment_id,))
+
+                # Keep post engagement counters consistent.
+                execute_query('''
+                    UPDATE posts
+                    SET num_comments = CASE WHEN num_comments > 0 THEN num_comments - 1 ELSE 0 END
+                    WHERE post_id = ?
+                ''', (post_id,))
+                execute_query('''
+                    UPDATE users
+                    SET total_comments_received = CASE
+                        WHEN total_comments_received > 0 THEN total_comments_received - 1
+                        ELSE 0
+                    END
+                    WHERE user_id = ?
+                ''', (post_author,))
+
+                # Increase violation count.
+                execute_query('''
+                    UPDATE users
+                    SET comment_violation_count = COALESCE(comment_violation_count, 0) + 1
+                    WHERE user_id = ?
+                ''', (self.user_id,))
+                updated_user = fetch_one(
+                    'SELECT comment_violation_count FROM users WHERE user_id = ?',
+                    (self.user_id,)
+                ) or {}
+                violation_count = int(updated_user.get('comment_violation_count') or 0)
+                is_banned, feedback = build_comment_moderation_feedback(violation_count, 3)
+
+                if is_banned:
+                    execute_query('''
+                        UPDATE users
+                        SET status = 'banned',
+                            ban_reason = ?,
+                            banned_at = CURRENT_TIMESTAMP
+                        WHERE user_id = ?
+                    ''', ("comment_keyword_violations", self.user_id))
+
+                execute_query('''
+                    INSERT INTO user_actions (user_id, action_type, target_id, content)
+                    VALUES (?, ?, ?, ?)
+                ''', (self.user_id, 'moderation_warning', comment_id, feedback))
+
+                self.last_comment_moderation_message = feedback
+                logging.warning(
+                    f"Comment blocked for user {self.user_id}: {feedback} "
+                    f"(keywords={verdict.detected_keywords})"
+                )
+                return None
+        except Exception as e:
+            logging.error(f"Comment keyword moderation failed for {comment_id}: {e}")
 
         # Trigger scenario class export
         try:
@@ -2944,9 +3035,15 @@ Task:
                     # Execute the actual action
                     if action == 'comment-post':
                         if self.comment_count < self.comment_limit:
-                            self.create_comment(target, content)
-                            self.comment_count += 1
-                            logging.info(f"💬 User {self.user_id} commented on post {target}: {content}")
+                            comment_id = self.create_comment(target, content)
+                            if comment_id:
+                                self.comment_count += 1
+                                logging.info(f"💬 User {self.user_id} commented on post {target}: {content}")
+                            elif self.last_comment_moderation_message:
+                                logging.warning(
+                                    f"⚠️ User {self.user_id} comment blocked: "
+                                    f"{self.last_comment_moderation_message}"
+                                )
                         else:
                             logging.warning(f"[WARN] User {self.user_id} reached comment limit, skipping comment")
                     elif action == 'add-note':

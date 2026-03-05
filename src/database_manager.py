@@ -406,7 +406,11 @@ class DatabaseManager:
                     total_comments_received INTEGER DEFAULT 0,
                     influence_score FLOAT DEFAULT 0.0,
                     is_influencer BOOLEAN DEFAULT FALSE,
-                    last_influence_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    last_influence_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'active',
+                    ban_reason TEXT,
+                    banned_at TIMESTAMP,
+                    comment_violation_count INTEGER DEFAULT 0
                 )
             ''',
             'posts': '''
@@ -504,6 +508,9 @@ class DatabaseManager:
                     num_likes INTEGER DEFAULT 0,
                     selected_model TEXT DEFAULT 'unknown',
                     agent_type TEXT DEFAULT 'normal',
+                    status TEXT DEFAULT 'active',
+                    moderation_reason TEXT,
+                    moderated_at TIMESTAMP,
                     FOREIGN KEY (post_id) REFERENCES posts(post_id),
                     FOREIGN KEY (author_id) REFERENCES users(user_id)
                 )
@@ -651,11 +658,37 @@ class DatabaseManager:
         for table_name, create_statement in tables.items():
             cursor.execute(create_statement)
 
+        # Ensure newly introduced moderation-related columns exist on old databases.
+        self._ensure_comment_moderation_columns(cursor)
+
         # Optional database migration: add new fields only when needed
         # self._migrate_database(cursor)  # Temporarily disable forced migration
 
         self.conn.commit()
         logging.info("Database tables created successfully.")
+
+    def _ensure_comment_moderation_columns(self, cursor):
+        """Add moderation columns for users/comments on existing databases."""
+        migrations = [
+            {'table': 'users', 'column': 'status', 'definition': "TEXT DEFAULT 'active'"},
+            {'table': 'users', 'column': 'ban_reason', 'definition': "TEXT"},
+            {'table': 'users', 'column': 'banned_at', 'definition': "TIMESTAMP"},
+            {'table': 'users', 'column': 'comment_violation_count', 'definition': "INTEGER DEFAULT 0"},
+            {'table': 'comments', 'column': 'status', 'definition': "TEXT DEFAULT 'active'"},
+            {'table': 'comments', 'column': 'moderation_reason', 'definition': "TEXT"},
+            {'table': 'comments', 'column': 'moderated_at', 'definition': "TIMESTAMP"},
+        ]
+
+        for migration in migrations:
+            try:
+                cursor.execute(
+                    f"SELECT {migration['column']} FROM {migration['table']} LIMIT 1"
+                )
+            except Exception:
+                cursor.execute(
+                    f"ALTER TABLE {migration['table']} "
+                    f"ADD COLUMN {migration['column']} {migration['definition']}"
+                )
 
     def _migrate_database(self, cursor):
         """Database migration: add new fields to existing tables"""
