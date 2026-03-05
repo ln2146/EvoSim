@@ -5257,8 +5257,9 @@ class SimpleCoordinationSystem:
 
             workflow_logger.info("   🚨 Analyst determined opinion balance intervention needed!")
             workflow_logger.info(f"  ⚠️  Alert generated - Urgency: {alert['urgency_level']}")
-            
+
             # 2. Strategist creates strategy
+            workflow_logger.info("⚖️ Strategist is creating strategy...")
             strategy_result = await self.strategist.create_strategy(alert)
 
             # Check whether strategy result is None or invalid
@@ -6139,6 +6140,44 @@ class SimpleCoordinationSystem:
 
         return monitoring_task_id
 
+    async def _strategist_phase3_evaluation(
+        self,
+        feedback_report: Dict[str, Any],
+        task: Dict[str, Any],
+        monitoring_count: int,
+        is_baseline: bool,
+    ) -> None:
+        """[Iterate] Strategist Agent - Phase 3 evaluation only (no content execution).
+
+        Phase 3 is a feedback-and-learning phase. The Strategist reads the analyst's
+        effectiveness report, assesses the current strategy's impact, and logs its
+        recommendation. Leader and Amplifier are intentionally excluded here; any
+        new content execution cycle happens in Phase 2 of the next workflow run.
+        """
+        round_label = "Baseline" if is_baseline else f"Round {monitoring_count}"
+        workflow_logger.info(f"⚖️ Strategist evaluating {round_label} effectiveness...")
+
+        effectiveness = feedback_report.get("effectiveness_assessment", {})
+        current_metrics = feedback_report.get("current_metrics", {})
+        change_metrics = feedback_report.get("change_metrics", {})
+
+        overall_score = effectiveness.get("overall_score", 0.0)
+        extremism = current_metrics.get("extremism_score", 0.5)
+        sentiment = current_metrics.get("sentiment_score", 0.5)
+        extremism_change = change_metrics.get("extremism_change", 0.0)
+        sentiment_change = change_metrics.get("sentiment_change", 0.0)
+
+        workflow_logger.info(f"  📊 {round_label} effectiveness score: {overall_score:.2f}/1.0")
+        workflow_logger.info(f"  📈 Extremism: {extremism:.2f}/1.0  Sentiment: {sentiment:.2f}/1.0")
+        workflow_logger.info(f"  🔄 Extremism change: {extremism_change:+.3f}  Sentiment change: {sentiment_change:+.3f}")
+
+        if overall_score >= 0.5:
+            workflow_logger.info("  🎯 Strategy assessment: intervention partially effective — continue monitoring")
+        else:
+            workflow_logger.info("  🎯 Strategy assessment: limited effect — next scan cycle will reassess and re-execute if needed")
+
+        workflow_logger.info(f"  📋 Strategist phase 3 evaluation complete (Leader/Amplifier reserved for Phase 2)")
+
     def _on_monitoring_task_done(self, monitoring_task_id: str, task_handle: asyncio.Task):
         """Monitoring task completion callback for tracking/diagnostics."""
         try:
@@ -6212,33 +6251,16 @@ class SimpleCoordinationSystem:
             
             # Check if success criteria are met
             success_achieved = self._check_success_criteria(feedback_report, task)
-            
+
             if success_achieved:
                 workflow_logger.info("  🎉 Monitoring goal achieved! Stopping monitoring loop")
                 break
-            
-            # Check whether intervention is needed
-            if success_achieved is False:
-                workflow_logger.info(f"  🚨 {'Baseline' if is_baseline else f'Round {monitoring_count}'} report indicates intervention needed...")
 
-                # Construct alert object from feedback report
-                alert = self._construct_alert_from_report(feedback_report, task)
-                if not alert:
-                    workflow_logger.warning("  ⚠️ Failed to construct alert object, skipping intervention")
-                else:
-                    # Execute intervention and update baseline data
-                    try:
-                        intervention_result = await self._execute_intervention_from_alert(alert, task)
-                        if intervention_result is None:
-                            workflow_logger.warning("  ⚠️ Intervention execution returned None")
-                        elif intervention_result.get("success"):
-                            workflow_logger.info(f"  ✅ {'Baseline' if is_baseline else f'Round {monitoring_count}'} intervention executed successfully")
-                        else:
-                            workflow_logger.warning(f"  ⚠️ {'Baseline' if is_baseline else f'Round {monitoring_count}'} intervention execution failed: {intervention_result.get('error', 'unknown error')}")
-                    except Exception as e:
-                        workflow_logger.warning(f"  ⚠️ Intervention execution error: {e}")
-            else:
-                workflow_logger.info(f"  ✅ {'Baseline' if is_baseline else f'Round {monitoring_count}'} report shows no intervention needed, continue monitoring...")
+            # Phase 3 protocol: criteria not yet met — Strategist evaluates only.
+            # Leader and Amplifier do NOT run in Phase 3 (feedback phase).
+            # If a new content execution cycle is needed it will be initiated by
+            # the outer _background_monitoring scan via a fresh execute_workflow call.
+            await self._strategist_phase3_evaluation(feedback_report, task, monitoring_count, is_baseline)
             
             # Wait for interval after each round (except the last)
             if monitoring_count < max_monitoring_cycles:
@@ -6488,6 +6510,7 @@ class SimpleCoordinationSystem:
             workflow_logger.info(f"     📋 Action ID: {action_id}")
             
             # 1. Strategist creates strategy - reuse execute_workflow logic
+            workflow_logger.info("⚖️ Strategist is creating strategy...")
             strategy_result = await self.strategist.create_strategy(alert)
             
             # Check whether strategy result is None or invalid
@@ -6541,7 +6564,7 @@ class SimpleCoordinationSystem:
                 target_post_id_clean = target_post_id_clean.replace("intervention_post_", "")
             
             # First leader uses LLM to generate content
-            workflow_logger.info("🎯 First leader agent starts generating content...")
+            workflow_logger.info("🎯 Leader Agent starts USC process and generates candidate comments...")
             content_result_1 = await self.leader.generate_strategic_content(
                 strategy,  # Pass full strategy object
                 content_text

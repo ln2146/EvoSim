@@ -33,6 +33,18 @@ export interface FlowState {
 
 const LOG_PREFIX_RE = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d+\s+-\s+\w+\s+-\s+/
 
+// Mirrors the backend parse_log_timestamp_ms logic.
+// Returns the local-time epoch milliseconds for a log line, or null if not parseable.
+const LOG_TS_RE = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2}),(\d+)/
+export function parseLogTimestampMs(line: string): number | null {
+  const m = LOG_TS_RE.exec(line)
+  if (!m) return null
+  // Use local time (same as Python time.mktime) so comparisons with Date.now() are consistent.
+  const dt = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], +m[7])
+  const ms = dt.getTime()
+  return Number.isFinite(ms) ? ms : null
+}
+
 const MAX_DURING_LINES_DEFAULT = 10
 const MAX_AFTER_LINES_DEFAULT = 6
 
@@ -114,6 +126,8 @@ const strategistAnchors = [
   /Selected optimal option:/i,
   /Intelligent strategy creation completed/i,
   /Strategy creation completed/i,
+  // Phase 3 evaluation anchor (no content execution — feedback-only pass)
+  /Strategist evaluating/i,
 ]
 
 const leaderAnchors = [
@@ -198,6 +212,8 @@ function mapLineToStageIndex(role: Role, cleanLine: string): number | null {
       if (/Tree-of-Thought/i.test(cleanLine) || /Generated \d+ strategy options/i.test(cleanLine)) return 2
       if (/Selected optimal strategy:/i.test(cleanLine)) return 3
       if (/Step\s*4:\s*Format as agent instructions/i.test(cleanLine) || /Format as agent instructions/i.test(cleanLine) || /Strategy creation completed/i.test(cleanLine)) return 4
+      // Phase 3 evaluation: map to stage 0 (entry) so the stepper shows activity
+      if (/Strategist evaluating/i.test(cleanLine)) return 0
       return null
     }
     case 'Leader': {

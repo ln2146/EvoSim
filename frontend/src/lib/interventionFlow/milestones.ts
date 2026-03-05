@@ -213,6 +213,14 @@ export function toUserMilestone(cleanLine: string): string | null {
   // Strategist
   if (/Strategist is creating strategy/i.test(s)) return '战略家：生成策略'
   if (/Strategist Agent\s*-\s*start intelligent strategy creation workflow/i.test(s)) return '战略家：启动智能策略生成'
+  // Phase 3 evaluation (feedback-only — no Leader/Amplifier)
+  {
+    const m = s.match(/Strategist evaluating\s+(\S+)\s+effectiveness/i)
+    if (m) return `战略家：评估${m[1] === 'Baseline' ? '基线' : `第${m[1].replace(/^Round\s*/i, '')}轮`}干预效果`
+  }
+  if (/Strategy assessment:\s*intervention partially effective/i.test(s)) return '战略家：干预初显效果，继续监测'
+  if (/Strategy assessment:\s*limited effect/i.test(s)) return '战略家：效果有限，下轮扫描重新评估'
+  if (/Strategist phase 3 evaluation complete/i.test(s)) return '战略家：Phase 3 评估完成'
   if (/Step\s*1:\s*Confirm alert information/i.test(s)) return '战略家：确认告警信息'
   {
     const m = s.match(/^📊\s*Alert ID:\s*(.+)$/i)

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ElementType, ty
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { Activity, Play, Square, Shield, Bug, Sparkles, Flame, MessageSquare, ArrowLeft, ThumbsUp, Share2, MessageCircle, BarChart3, Eye, RefreshCw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { createInitialFlowState, routeLogLine, stripLogPrefix, type FlowState, type Role } from '../lib/interventionFlow/logRouter'
+import { createInitialFlowState, routeLogLine, stripLogPrefix, parseLogTimestampMs, type FlowState, type Role } from '../lib/interventionFlow/logRouter'
 import { createEventSourceLogStream, createSimulatedLogStream, type LogStream } from '../lib/interventionFlow/logStream'
 import { computeEffectiveRole, nextSelectedRoleOnTabClick } from '../lib/interventionFlow/selection'
 import { parsePostContent } from '../lib/interventionFlow/postContent'
@@ -491,7 +491,14 @@ export default function DynamicDemo() {
     const stream = USE_SIMULATED_LOG_STREAM
       ? createSimulatedLogStream({ lines: DEMO_BACKEND_LOG_LINES, intervalMs: 320 })
       : createEventSourceLogStream(streamUrl)
-    const unsubscribe = stream.subscribe((line) => renderQueue.push(line))
+    // Frontend-side time guard: drop any line whose log timestamp is before the
+    // program start time (sinceMs). The backend already filters via since_ms, but
+    // timestamp-less continuation lines can still slip through; this closes that gap.
+    const unsubscribe = stream.subscribe((line) => {
+      const ts = parseLogTimestampMs(line)
+      if (ts !== null && ts < sinceMs) return
+      renderQueue.push(line)
+    })
     stream.start()
 
     streamRef.current = stream
