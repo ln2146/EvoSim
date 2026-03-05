@@ -9,7 +9,6 @@ from typing import Optional, Dict, Any, List, Tuple
 
 from ..types import ModerationVerdict, ModerationSeverity
 from ..config import ModerationConfig
-from .openai_provider import OpenAIProvider
 from .keyword_provider import KeywordProvider
 from .llm_provider import LLMProvider
 
@@ -56,13 +55,6 @@ class CompositeProvider:
             weight = self.config.keyword_provider.weight
             self.providers.append(("keyword", weight, provider))
             logger.info(f"[COMPOSITE_INIT] Keyword provider initialized | weight={weight}")
-
-        # OpenAI Moderation API Provider（已废弃，需独立付费账户）
-        if self.config.openai_provider.enabled:
-            provider = OpenAIProvider(self.config.openai_provider)
-            weight = self.config.openai_provider.weight
-            self.providers.append(("openai", weight, provider))
-            logger.info(f"[COMPOSITE_INIT] OpenAI provider initialized | weight={weight}")
 
         if not self.providers:
             logger.warning("No moderation providers enabled")
