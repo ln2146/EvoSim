@@ -248,7 +248,14 @@ Write your hostile post:"""
 
         return f"{starter} {ending}"
 
-    async def _execute_attack(self, post_id: str, content: str, user_id: str, override_cluster_size: int = None) -> Dict[str, Any]:
+    async def _execute_attack(
+        self,
+        post_id: str,
+        content: str,
+        user_id: str,
+        override_cluster_size: int = None,
+        post_pool: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """Cross-like among malicious users within the current attack batch."""
         try:
 
@@ -256,16 +263,18 @@ Write your hostile post:"""
             used_cluster_size = override_cluster_size if override_cluster_size is not None else self.cluster_size
 
             # Coordinate cluster attack via orchestrator（支持角色分化 + 策略路由）
+            # DISPERSED 模式需要 post_pool；SWARM/CHAIN 模式忽略该参数
             attack_results = await self.orchestrator.execute(
                 target_post_id=post_id,
                 target_content=content,
                 cluster_size=used_cluster_size,
+                post_pool=post_pool,
             )
 
             # Record the attack
             attack_id = self._record_attack(post_id, user_id, attack_results, used_cluster_size)
 
-            # Generate malicious comments
+            # Generate malicious comments（DISPERSED 模式下各结果携带 target_post_id）
             comment_ids = self._create_malicious_comments(post_id, attack_results, attack_id)
 
             return {
@@ -352,6 +361,8 @@ Write your hostile post:"""
         for i, attack in enumerate(attack_results):
             # Fix: check if attack result is valid (has content means successful)
             content = attack.get("content", "")
+            # DISPERSED 模式下，每条结果携带 target_post_id（指向各自被攻击的帖子）
+            effective_post_id = attack.get("target_post_id", post_id)
 
             # Strict validation: content must not be empty and length after trimming must be greater than 0
             if not content or not content.strip():
@@ -401,7 +412,7 @@ Write your hostile post:"""
             comment_data = (
                 comment_id,
                 content,
-                post_id,
+                effective_post_id,  # DISPERSED 模式下指向各自目标帖子
                 malicious_user_id,
                 datetime.now().isoformat(),
                 0,  # Remove fake likes, start from 0, rely only on real mutual likes among malicious bots
@@ -492,20 +503,28 @@ Write your hostile post:"""
                         ) VALUES (?, ?, ?, ?, ?, ?)
                     ''', [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in batch_malicious_records])
 
-        # Batch update post comment counts
+        # Batch update post comment counts（DISPERSED 模式下按 target_post_id 分组统计）
         if comment_ids:
-            cursor.execute('''
-                UPDATE posts
-                SET num_comments = num_comments + ?
-                WHERE post_id = ?
-            ''', (len(comment_ids), post_id))
-            # Also increment post likes (each attacker adds one like)
-            try:
+            # 统计每条帖子被评论的次数（DISPERSED 模式下结果分散到多条帖子）
+            post_comment_counts: Dict[str, int] = {}
+            for c_data in batch_comments:
+                pid = c_data[2]  # comment_data[2] = effective_post_id
+                post_comment_counts[pid] = post_comment_counts.get(pid, 0) + 1
+
+            for pid, cnt in post_comment_counts.items():
                 cursor.execute('''
                     UPDATE posts
-                    SET num_likes = COALESCE(num_likes, 0) + ?
+                    SET num_comments = num_comments + ?
                     WHERE post_id = ?
-                ''', (len(comment_ids), post_id))
+                ''', (cnt, pid))
+            # Also increment post likes (each attacker adds one like)
+            try:
+                for pid, cnt in post_comment_counts.items():
+                    cursor.execute('''
+                        UPDATE posts
+                        SET num_likes = COALESCE(num_likes, 0) + ?
+                        WHERE post_id = ?
+                    ''', (cnt, pid))
             except Exception:
                 pass
 
@@ -513,7 +532,10 @@ Write your hostile post:"""
         self.conn.commit()
 
         # Cross-liking mechanism within the current attack batch (only target these comments)
-        if comment_ids:
+        # DISPERSED 模式不执行 cross-like（游离式攻击的核心特征：无互动协调）
+        from .coordination_strategies import CoordinationMode
+        is_dispersed = (self.bot_config.coordination_mode == CoordinationMode.DISPERSED)
+        if comment_ids and not is_dispersed:
             try:
                 # Step 1: Run the in-batch cross-like (15 bots liking two comments)
                 self._current_attack_cross_like_sync(comment_ids, batch_comments, post_id)
@@ -775,6 +797,7 @@ Write your hostile post:"""
             recent_fake_ids: List[str] = []
             if current_step is not None:
                 try:
+                    from .coordination_strategies import CoordinationMode
                     cur0 = self.conn.cursor()
                     cur0.execute(
                         '''
@@ -789,6 +812,9 @@ Write your hostile post:"""
                         (int(current_step),),
                     )
                     rf_rows = cur0.fetchall()
+
+                    # 收集所有近期虚假新闻帖子信息
+                    fake_news_pool: List[Dict[str, Any]] = []
                     for row in rf_rows:
                         try:
                             pid, content, author_id, engagement = row[0], row[1], row[2], row[3]
@@ -802,31 +828,75 @@ Write your hostile post:"""
                         if not pid:
                             continue
                         recent_fake_ids.append(pid)
+                        fake_news_pool.append({
+                            'post_id': pid,
+                            'content': content,
+                            'author_id': author_id,
+                            'engagement': engagement,
+                        })
 
-                        # Each recent fake news item receives 15 hostile comments
+                    # DISPERSED 模式：将全部虚假新闻帖子作为 post_pool，一次调用分散攻击
+                    # 其他模式：按原逻辑逐条帖子单独攻击
+                    is_dispersed = (self.bot_config.coordination_mode == CoordinationMode.DISPERSED)
+
+                    if is_dispersed and fake_news_pool:
+                        # 游离式：单次调用，bot 自动分散到多条帖子
+                        representative = fake_news_pool[0]
                         res = await self._execute_attack(
-                            pid,
-                            content,
-                            author_id,
+                            representative['post_id'],
+                            representative['content'],
+                            representative['author_id'],
                             override_cluster_size=self.fake_news_attack_size,
+                            post_pool=fake_news_pool,
                         )
                         if res.get('success'):
-                            attacked_posts.append(
-                                {
-                                    'post_id': pid,
-                                    'engagement': engagement,
-                                    'comments_added': len(res.get('comment_ids', [])),
-                                }
-                            )
+                            for post_info in fake_news_pool:
+                                attacked_posts.append({
+                                    'post_id': post_info['post_id'],
+                                    'engagement': post_info['engagement'],
+                                    'comments_added': 0,  # 已分散，无法精确对应
+                                })
+                            attacked_posts[0]['comments_added'] = len(res.get('comment_ids', []))
                             attack_results.append(res)
                         else:
-                            skipped_posts.append(
-                                {
-                                    'post_id': pid,
-                                    'engagement': engagement,
+                            for post_info in fake_news_pool:
+                                skipped_posts.append({
+                                    'post_id': post_info['post_id'],
+                                    'engagement': post_info['engagement'],
                                     'reason': res.get('error', 'unknown'),
-                                }
+                                })
+                    else:
+                        # SWARM / CHAIN 模式：逐条帖子单独攻击
+                        for post_info in fake_news_pool:
+                            pid = post_info['post_id']
+                            content = post_info['content']
+                            author_id = post_info['author_id']
+                            engagement = post_info['engagement']
+
+                            # Each recent fake news item receives 15 hostile comments
+                            res = await self._execute_attack(
+                                pid,
+                                content,
+                                author_id,
+                                override_cluster_size=self.fake_news_attack_size,
                             )
+                            if res.get('success'):
+                                attacked_posts.append(
+                                    {
+                                        'post_id': pid,
+                                        'engagement': engagement,
+                                        'comments_added': len(res.get('comment_ids', [])),
+                                    }
+                                )
+                                attack_results.append(res)
+                            else:
+                                skipped_posts.append(
+                                    {
+                                        'post_id': pid,
+                                        'engagement': engagement,
+                                        'reason': res.get('error', 'unknown'),
+                                    }
+                                )
                 except Exception:
                     # Stay resilient: if the fake news query fails, continue with other hot posts
                     pass

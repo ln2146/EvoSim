@@ -31,9 +31,10 @@ class AttackModeConfig:
                             执行互点赞（cross-like）操控推荐算法热度。
                             角色分布由 MaliciousBotConfig.role_distribution 控制。
 
-        mode = "dispersed"  游离式（Step 3 待实现）
+        mode = "dispersed"  游离式
                             bot 随机分散到多条帖子，模拟低组织度自发舆论攻击。
                             每条帖子最多 3~5 个 bot，不执行 cross-like。
+                            角色以 Agitator 60% + Spammer 40% 为主。
 
         mode = "chain"      链式传播（Step 4 待实现）
                             三层水军结构，参考 MultiAgent4Collusion：
