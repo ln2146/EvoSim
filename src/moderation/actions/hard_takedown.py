@@ -81,6 +81,15 @@ class HardTakedownAction:
         Returns:
             是否封号
         """
+        # 检查是否在封号豁免列表中（如新闻发布账号）
+        ban_exempt_users = getattr(self.config, 'ban_exempt_users', [])
+        if verdict.user_id in ban_exempt_users:
+            logger.info(
+                f"User {verdict.user_id} is exempt from ban (in ban_exempt_users), "
+                f"post will be taken down but account remains active"
+            )
+            return False
+
         # 检查封号阈值
         for severity, threshold in self.config.ban_thresholds.items():
             if verdict.severity == severity and verdict.confidence >= threshold:

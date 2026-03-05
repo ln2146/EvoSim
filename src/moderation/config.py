@@ -14,7 +14,7 @@ class ModerationProviderConfig:
     """
     审核提供者配置
 
-    每个审核提供者（OpenAI、关键词等）的配置
+    每个审核提供者（LLM、关键词等）的配置
     """
     # 开关
     enabled: bool = False
@@ -23,10 +23,10 @@ class ModerationProviderConfig:
     # 触发阈值
     threshold: float = 0.7  # 触发审核的最小置信度
 
-    # OpenAI API 配置
+    # LLM API 配置
     api_endpoint: Optional[str] = None
     api_key: Optional[str] = None
-    model: str = "gpt-4o-mini"
+    model: str = "gemini-2.0-flash"
 
     # 关键词配置
     keywords: Dict[str, List[str]] = field(default_factory=dict)
@@ -40,6 +40,14 @@ class ModerationActionConfig:
 
     定义不同严重程度对应的干预方式和参数
     """
+    # 封号豁免用户列表 - 这些用户只处理帖子（删帖/降权/警告），不封禁账号
+    # 典型用途：新闻发布账号需要持续运作，即使某条新闻违规也不应封禁账号
+    ban_exempt_users: List[str] = field(
+        default_factory=lambda: [
+            "agentverse_news",  # 系统新闻发布账号
+        ]
+    )
+
     # 可见性降级系数 - 严重程度 -> 推荐权重系数
     visibility_degradation_factors: Dict[ModerationSeverity, float] = field(
         default_factory=lambda: {
@@ -98,12 +106,6 @@ class ModerationConfig:
     enabled: bool = False
 
     # 审核提供者配置
-    openai_provider: ModerationProviderConfig = field(
-        default_factory=lambda: ModerationProviderConfig(
-            enabled=False,   # 已废弃：OpenAI Moderation API 需要独立付费账户，改用 llm_provider
-            threshold=0.7,
-        )
-    )
     keyword_provider: ModerationProviderConfig = field(
         default_factory=lambda: ModerationProviderConfig(
             enabled=True,   # 启用关键词审核（发布前）
@@ -216,13 +218,13 @@ class ModerationConfig:
 
         return cls(
             enabled=config_dict.get('enabled', False),
-            openai_provider=parse_dataclass(
-                ModerationProviderConfig,
-                config_dict.get('openai_provider')
-            ),
             keyword_provider=parse_dataclass(
                 ModerationProviderConfig,
                 config_dict.get('keyword_provider')
+            ),
+            llm_provider=parse_dataclass(
+                ModerationProviderConfig,
+                config_dict.get('llm_provider')
             ),
             actions=parse_dataclass(
                 ModerationActionConfig,
@@ -239,8 +241,8 @@ class ModerationConfig:
         from dataclasses import asdict
         return {
             'enabled': self.enabled,
-            'openai_provider': asdict(self.openai_provider),
             'keyword_provider': asdict(self.keyword_provider),
+            'llm_provider': asdict(self.llm_provider),
             'actions': asdict(self.actions),
             'keyword_check_threshold': self.keyword_check_threshold,
             'llm_check_threshold': self.llm_check_threshold,
@@ -260,15 +262,6 @@ def load_config_from_env() -> ModerationConfig:
     支持通过环境变量覆盖配置
     """
     config = ModerationConfig()
-
-    # OpenAI API Key
-    import os
-    if 'OPENAI_API_KEY' in os.environ:
-        config.openai_provider.api_key = os.environ['OPENAI_API_KEY']
-
-    # OpenAI Base URL (可选)
-    if 'OPENAI_BASE_URL' in os.environ:
-        config.openai_provider.api_endpoint = f"{os.environ['OPENAI_BASE_URL']}/v1/moderations"
 
     # 启用状态
     if 'MODERATION_ENABLED' in os.environ:
