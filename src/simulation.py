@@ -15,6 +15,7 @@ from news_spread_analyzer import NewsSpreadAnalyzer
 from fact_checker import FactChecker, FactCheckVerdict
 from prompts import FactCheckerPrompts
 from opinion_balance_manager import OpinionBalanceManager
+from agents.simple_coordination_system import _workflow_log_buffer
 # Remove the complex user selector
 import asyncio
 
@@ -1379,6 +1380,11 @@ class Simulation:
             if trending_posts:
                 print(f"   Found {len(trending_posts)} trending posts; analyzing from highest to lowest heat (includes news and user posts)")
 
+                if not hasattr(self, "_active_intervention_post_ids") or self._active_intervention_post_ids is None:
+                    self._active_intervention_post_ids = set()
+
+                # Phase 1: read all post content into memory and launch workflow tasks in parallel
+                workflow_tasks = []  # list of (post_id, task)
                 for post_row in trending_posts:
                     post_id, content, author_id, num_comments, num_likes, num_shares, created_at = post_row
                     total_engagement = num_comments + num_likes + num_shares
@@ -1388,158 +1394,152 @@ class Simulation:
                     print(f"   💬 Comments: {num_comments}, 👍 Likes: {num_likes}, 🔄 Shares: {num_shares}")
                     print(f"   🔥 Total heat: {total_engagement}")
                     print(f"   📝 Content: {content[:80]}...")
-                    if hasattr(self, "_active_intervention_post_ids") and post_id in self._active_intervention_post_ids:
+
+                    if post_id in self._active_intervention_post_ids:
                         print(f"   ⏭️  Skip post {post_id}: intervention task already running")
                         continue
 
-                    # Collect four comments for this post: two for hottest, two for latest (matching regular user logic)
-                    # First get the two highest-heat comments
-                    cursor.execute("""
-                        SELECT comment_id, content, author_id, num_likes, created_at
-                        FROM comments
-                        WHERE post_id = ?
-                        ORDER BY num_likes DESC, created_at DESC
-                        LIMIT 2
-                    """, (post_id,))
-                    hot_comment_rows = cursor.fetchall()
+                    if not (self.opinion_balance_manager and self.opinion_balance_manager.enabled):
+                        print(f"   [WARN]  Opinion balance system not enabled")
+                        continue
 
-                    # Fetch two most recent comments (excluding the ones already retrieved as hottest)
-                    hot_comment_ids = [row[0] for row in hot_comment_rows]
-                    if hot_comment_ids:
-                        placeholders = ','.join('?' * len(hot_comment_ids))
-                        cursor.execute(f"""
-                            SELECT comment_id, content, author_id, num_likes, created_at
-                            FROM comments
-                            WHERE post_id = ? AND comment_id NOT IN ({placeholders})
-                            ORDER BY created_at DESC
-                            LIMIT 2
-                        """, [post_id] + hot_comment_ids)
-                    else:
+                    coordination_system = self.opinion_balance_manager.coordination_system
+                    if not coordination_system:
+                        print(f"   [WARN]  Coordination system component not found")
+                        continue
+
+                    try:
+                        # Collect four comments: two hottest + two latest
                         cursor.execute("""
                             SELECT comment_id, content, author_id, num_likes, created_at
                             FROM comments
                             WHERE post_id = ?
-                            ORDER BY created_at DESC
+                            ORDER BY num_likes DESC, created_at DESC
                             LIMIT 2
                         """, (post_id,))
-                    recent_comment_rows = cursor.fetchall()
+                        hot_comment_rows = cursor.fetchall()
 
-                    # Merge comments: first by heat, then by recency
-                    all_comment_rows = hot_comment_rows + recent_comment_rows
-                    top_comments = []
-                    for comment_row in all_comment_rows:
-                        comment_id, content_c, author_id_c, num_likes_c, created_at_c = comment_row
-                        top_comments.append({
-                            "comment_id": comment_id,
-                            "content": content_c,
-                            "author_id": author_id_c,
-                            "num_likes": num_likes_c,
-                            "created_at": created_at_c
-                        })
+                        hot_comment_ids = [row[0] for row in hot_comment_rows]
+                        if hot_comment_ids:
+                            placeholders = ','.join('?' * len(hot_comment_ids))
+                            cursor.execute(f"""
+                                SELECT comment_id, content, author_id, num_likes, created_at
+                                FROM comments
+                                WHERE post_id = ? AND comment_id NOT IN ({placeholders})
+                                ORDER BY created_at DESC
+                                LIMIT 2
+                            """, [post_id] + hot_comment_ids)
+                        else:
+                            cursor.execute("""
+                                SELECT comment_id, content, author_id, num_likes, created_at
+                                FROM comments
+                                WHERE post_id = ?
+                                ORDER BY created_at DESC
+                                LIMIT 2
+                            """, (post_id,))
+                        recent_comment_rows = cursor.fetchall()
 
-                    print(f"   💬 Total comments collected: {len(top_comments)} (2 hottest + 2 latest)")
-                    hot_comments_count = len(hot_comment_rows)
-                    recent_comments_count = len(recent_comment_rows)
-                    for i, comment in enumerate(top_comments, 1):
-                        comment_type = "🔥 Hot" if i <= hot_comments_count else "🕒 New"
-                        print(f"      {comment_type} comment {i}: {comment['content'][:50]}... (👍{comment['num_likes']})")
+                        hot_comments_count = len(hot_comment_rows)
+                        all_comment_rows = hot_comment_rows + recent_comment_rows
+                        print(f"   💬 Total comments collected: {len(all_comment_rows)} (2 hottest + 2 latest)")
+                        for i, comment_row in enumerate(all_comment_rows, 1):
+                            comment_type = "🔥 Hot" if i <= hot_comments_count else "🕒 New"
+                            print(f"      {comment_type} comment {i}: {comment_row[1][:50]}... (👍{comment_row[3]})")
 
-                    # Invoke the full opinion balance workflow
-                    if self.opinion_balance_manager and self.opinion_balance_manager.enabled:
-                        try:
-                            print(f"   🔍 Launching opinion balance analysis and intervention workflow...")
-
-                            # Build formatted content for the workflow (distinguish hot and latest comments)
-                            formatted_content = f"""[Trending Post Opinion Analysis]
+                        # Build formatted content (cached in memory)
+                        formatted_content = f"""[Trending Post Opinion Analysis]
 Post ID: {post_id}
 Author: {author_id}
 Total heat: {total_engagement}
 Post content: {content}
 
 Top comments (sorted by likes):"""
+                        for i, (comment_id, content_c, author_id_c, num_likes_c, created_at_c) in enumerate(hot_comment_rows, 1):
+                            formatted_content += f"\n🔥 Hot comment {i}: {content_c}\n- Author: {author_id_c}\n- Likes: {num_likes_c}"
+                        formatted_content += "\n\nLatest comments (chronological):"
+                        for i, (comment_id, content_c, author_id_c, num_likes_c, created_at_c) in enumerate(recent_comment_rows, 1):
+                            formatted_content += f"\n🕒 Recent comment {i}: {content_c}\n- Author: {author_id_c}\n- Likes: {num_likes_c}"
 
-                            # Display the hottest comments
-                            for i, comment in enumerate(hot_comment_rows, 1):
-                                comment_id, content_c, author_id_c, num_likes_c, created_at_c = comment
-                                formatted_content += f"""
-🔥 Hot comment {i}: {content_c}
-- Author: {author_id_c}
-- Likes: {num_likes_c}"""
+                        current_time_step = None
+                        try:
+                            cursor.execute('SELECT MAX(time_step) AS max_step FROM feed_exposures')
+                            ts_result = cursor.fetchone()
+                            if ts_result and ts_result[0] is not None:
+                                current_time_step = ts_result[0]
+                        except Exception:
+                            pass
 
-                            formatted_content += """
+                        # Give this task its own log buffer so its workflow_logger
+                        # output is buffered separately; Phase 2 will flush each
+                        # buffer to the file in post order → sequential SSE display.
+                        log_buffer: list = []
+                        _workflow_log_buffer.set(log_buffer)  # inherited by create_task snapshot
 
-Latest comments (chronological):"""
+                        self._active_intervention_post_ids.add(post_id)
+                        task = asyncio.create_task(
+                            coordination_system.execute_workflow(
+                                content_text=formatted_content,
+                                content_id=post_id,
+                                monitoring_interval=self.opinion_balance_manager.feedback_monitoring_interval,
+                                enable_feedback=self.opinion_balance_manager.feedback_enabled,
+                                force_intervention=False,
+                                time_step=current_time_step
+                            )
+                        )
+                        workflow_tasks.append((post_id, task, log_buffer))
+                        print(f"   🚀 Workflow task launched for post {post_id} (parallel)")
 
-                            # Display the latest comments
-                            for i, comment in enumerate(recent_comment_rows, 1):
-                                comment_id, content_c, author_id_c, num_likes_c, created_at_c = comment
-                                formatted_content += f"""
-🕒 Recent comment {i}: {content_c}
-- Author: {author_id_c}
-- Likes: {num_likes_c}"""
+                    except Exception as e:
+                        print(f"   [ERR] Failed to prepare workflow for post {post_id}: {e}")
+                        import traceback
+                        traceback.print_exc()
 
-                            coordination_system = self.opinion_balance_manager.coordination_system
-                            if coordination_system:
-                                # Determine the current time step (when the comments were posted)
-                                current_time_step = None
-                                try:
-                                # Get the maximum time step from the feed_exposures table
-                                    cursor.execute('SELECT MAX(time_step) AS max_step FROM feed_exposures')
-                                    result = cursor.fetchone()
-                                    if result and result[0] is not None:
-                                        current_time_step = result[0]
-                                except Exception:
-                                    pass
-                                
-                                # Launch the opinion balance workflow asynchronously without blocking the simulation
-                                print(f"   🚀 Starting the asynchronous opinion balance workflow...")
-                                
-                                # Create the async task without awaiting the result
-                                intervention_task = asyncio.create_task(
-                                    coordination_system.execute_workflow(
-                                        content_text=formatted_content,
-                                        content_id=post_id,
-                                        monitoring_interval=self.opinion_balance_manager.feedback_monitoring_interval,
-                                        enable_feedback=self.opinion_balance_manager.feedback_enabled,
-                                        force_intervention=False,  # Leave the intervention decision to the internal analysts
-                                        time_step=current_time_step  # Pass the current time step
-                                    )
-                                )
-                                
-                                task_registered = self._register_intervention_task(
-                                    post_id=post_id,
-                                    intervention_task=intervention_task,
-                                    content_preview=formatted_content[:100] + "..." if len(formatted_content) > 100 else formatted_content,
-                                )
-                                if not task_registered:
-                                    intervention_task.cancel()
-                                    print(f"   ⏭️  Skip duplicate launch for post {post_id}: task already registered")
-                                    continue
-                                
-                                print(f"   [OK] Opinion balance workflow launched asynchronously")
-                                print(f"   📋 Task ID: {post_id}")
-                                print(f"   ⏰ Start time: {datetime.now().strftime('%H:%M:%S')}")
-                                print("="*60)
-                            else:
-                                print(f"   [WARN]  Coordination system component not found")
+                # Reset outer context so any logging after this point goes straight to file
+                _workflow_log_buffer.set(None)
 
-                        except Exception as e:
-                            print(f"   [ERR] Analyst workflow encountered an error: {e}")
-                            import traceback
-                            traceback.print_exc()
-                        
-                        # Check and display the status of asynchronous tasks
-                        await self._check_intervention_tasks_status()
-                    else:
-                        print(f"   [WARN]  Opinion balance system not enabled")
-                else:
-                    # Remain silent when no trending posts are found
-                    pass
+                # Phase 2: await each task in original order, flush its log buffer to
+                # the file first (sequential write → sequential SSE display), then persist.
+                for post_id, task, log_buffer in workflow_tasks:
+                    print(f"\n   ⏳ Waiting for post {post_id} workflow result...")
+                    try:
+                        result = await task
+                        # Write this post's buffered log lines to the file in one block
+                        self._flush_workflow_log_buffer(log_buffer)
+                        self._persist_opinion_intervention_result(post_id, result)
+                        print(f"   [OK] Post {post_id} complete and persisted")
+                        print(f"   ⏰ {datetime.now().strftime('%H:%M:%S')}")
+                        print("=" * 60)
+                    except Exception as e:
+                        # Even on error, flush what was captured so logs aren't lost
+                        self._flush_workflow_log_buffer(log_buffer)
+                        print(f"   [ERR] Post {post_id} workflow failed: {e}")
+                        import traceback
+                        traceback.print_exc()
+                    finally:
+                        self._active_intervention_post_ids.discard(post_id)
+            else:
+                # Remain silent when no trending posts are found
+                pass
 
         except Exception as e:
             logging.error(f"Error during background trending post monitoring: {e}")
             import traceback
             traceback.print_exc()
+
+    def _flush_workflow_log_buffer(self, buf: list) -> None:
+        """Write lines buffered by a parallel workflow task to the workflow log file in one block."""
+        if not buf:
+            return
+        try:
+            from agents.simple_coordination_system import workflow_logger
+            for handler in workflow_logger.handlers:
+                if isinstance(handler, logging.FileHandler):
+                    for line in buf:
+                        handler.stream.write(line + '\n')
+                    handler.stream.flush()
+                    break
+        except Exception as e:
+            logging.error(f"Failed to flush workflow log buffer: {e}")
 
     async def _check_intervention_tasks_status(self):
         """Check the status of asynchronous intervention tasks"""

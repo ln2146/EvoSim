@@ -104,6 +104,16 @@ const strategistAnchors = [
   /Strategist is creating strategy/i,
   /start intelligent strategy creation workflow/i,
   /Use Tree-of-Thought/i,
+  // Mid/late-stage Strategist lines — needed so the role switches back to Strategist
+  // even after an isNewRoundAnchor reset caused by interleaved parallel workflow logs.
+  /Query historical successful strategies/i,
+  /Retrieved \d+ results from action_logs/i,
+  /Found \d+ related historical strategies/i,
+  /Generated \d+ strategy options/i,
+  /Selected optimal strategy:/i,
+  /Selected optimal option:/i,
+  /Intelligent strategy creation completed/i,
+  /Strategy creation completed/i,
 ]
 
 const leaderAnchors = [
