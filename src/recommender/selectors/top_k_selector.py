@@ -149,6 +149,28 @@ class TopKSelector:
         if len(candidates) <= pick_n:
             return candidates
 
-        # 使用分数作为权重
-        weights = [max(0.0001, c.final_score) for c in candidates]
-        return random.choices(candidates, weights=weights, k=pick_n)
+        # 无放回加权采样：每次按当前权重抽 1 个并从池中移除
+        # 这样可避免重复样本导致的去重后数量下降。
+        pool = list(candidates)
+        selected: List[PostCandidate] = []
+        draws = min(pick_n, len(pool))
+
+        for _ in range(draws):
+            weights = [max(0.0001, c.final_score) for c in pool]
+            total = sum(weights)
+            if total <= 0:
+                break
+
+            r = random.uniform(0, total)
+            cumulative = 0.0
+            picked_idx = len(pool) - 1  # 浮点边界时兜底最后一个
+
+            for idx, w in enumerate(weights):
+                cumulative += w
+                if r <= cumulative:
+                    picked_idx = idx
+                    break
+
+            selected.append(pool.pop(picked_idx))
+
+        return selected
