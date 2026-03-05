@@ -4,6 +4,7 @@
 遵循 AGENT_ENVIRONMENT_SPEC.md: Config 层定义所有可配置参数
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from .types import ModerationAction, ModerationSeverity
