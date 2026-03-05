@@ -2,13 +2,13 @@ import json
 import os
 from typing import List
 
-from simple_malicious_agent import MaliciousPersona, SimpleMaliciousCluster
+from .simple_malicious_agent import MaliciousPersona, SimpleMaliciousCluster
 
 
 def _load_negative_personas_impl(self) -> List[MaliciousPersona]:
     try:
         personas_file = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
             'personas',
             'negative_personas_database.json'
         )
