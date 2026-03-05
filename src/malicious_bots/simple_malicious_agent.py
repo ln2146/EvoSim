@@ -34,13 +34,21 @@ class MaliciousPersona:
 
 class SimpleMaliciousCluster:
     """Simplified malicious agent cluster"""
-    
+
     def __init__(self, cluster_size: int):
         self.cluster_size = cluster_size
         self.model_selector = MultiModelSelector()
-        
+
         # Load malicious personas from negative_personas_database.json
         self.malicious_personas = self._load_negative_personas()
+
+        # 规避补丁：由 AdaptiveController 在 HIGH 审核压力时注入，
+        # 追加到每条评论的提示词末尾以降低被审核系统识别的概率。
+        self._evasion_patch: str = ""
+
+    def set_evasion_patch(self, patch: str) -> None:
+        """设置（或清除）提示词规避补丁。由 AdaptiveController 在攻击前调用。"""
+        self._evasion_patch = patch or ""
 
     def _load_negative_personas(self) -> List[MaliciousPersona]:
         """Load negative personas from the database"""
@@ -181,6 +189,10 @@ Response requirements:
 - Use casual slang, aggressive tone; focus on emotional manipulation over logic—no need for accuracy
 
 Write your toxic response:"""
+
+        # 若 AdaptiveController 注入了规避补丁（HIGH 审核压力），追加到提示词末尾
+        if self._evasion_patch:
+            prompt = f"{prompt}\n\n{self._evasion_patch}"
 
         return prompt
 

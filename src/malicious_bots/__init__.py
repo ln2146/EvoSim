@@ -15,6 +15,7 @@ from .bot_role_overlay import BotRole, RoleOverlay, assign_bot_roles, get_role_o
 from .coordination_strategies import CoordinationMode
 from .config import MaliciousBotConfig, AttackModeConfig, ChainConfig, AdaptiveConfig, DEFAULT_CONFIG
 from .attack_orchestrator import AttackOrchestrator
+from .adaptive_controller import AdaptiveController, PressureLevel
 
 __all__ = [
     "MaliciousBotManager",
@@ -31,4 +32,6 @@ __all__ = [
     "AdaptiveConfig",
     "DEFAULT_CONFIG",
     "AttackOrchestrator",
+    "AdaptiveController",
+    "PressureLevel",
 ]

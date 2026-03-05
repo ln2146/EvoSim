@@ -17,6 +17,7 @@ import os
 from .simple_malicious_agent import SimpleMaliciousCluster, MaliciousPersona
 from .config import MaliciousBotConfig, DEFAULT_CONFIG
 from .attack_orchestrator import AttackOrchestrator
+from .adaptive_controller import AdaptiveController, PressureLevel
 
 
 def _build_comment_moderation_feedback(
@@ -61,6 +62,12 @@ class MaliciousBotManager:
 
         # 统一攻击策略路由器（传入 conn 供 ChainStrategy 写入 leader post/user）
         self.orchestrator = AttackOrchestrator(self.bot_cluster, self.bot_config, conn=self.conn)
+
+        # 自适应控制器：根据平台审核压力动态调整策略（参考 MultiAgent4Collusion 反思机制）
+        self.adaptive_controller = AdaptiveController(
+            config=self.bot_config.adaptive,
+            model_selector=self.bot_cluster.model_selector,
+        )
 
         self._create_database_tables()
         self._init_comment_moderation_policy()
@@ -910,6 +917,48 @@ Write your hostile post:"""
             return {"success": False, "error": "bot_cluster_not_initialized"}
 
         try:
+            # === 自适应控制：根据平台审核压力调整本轮攻击参数 ===
+            # 保存原始配置，攻击完成后恢复（避免持久化修改影响下一步）
+            _orig_mode = self.bot_config.attack_mode.mode
+            _orig_role_dist = dict(self.bot_config.role_distribution)
+            _effective_attack_size = self.fake_news_attack_size  # 默认值，可被自适应逻辑覆盖
+
+            if self.bot_config.adaptive.enabled:
+                pressure = self.adaptive_controller.update(self.conn)
+
+                # 调整角色分布（HIGH 压力时偏向 ConcernTroll 规避审核）
+                effective_role_dist = self.adaptive_controller.get_effective_role_distribution(
+                    self.bot_config.role_distribution
+                )
+                self.bot_config.role_distribution = effective_role_dist
+
+                # HIGH 压力 + SWARM 模式 → 自动切换为 DISPERSED（降低目标集中度）
+                from .coordination_strategies import CoordinationMode as _CM
+                if (self.adaptive_controller.should_switch_to_dispersed()
+                        and self.bot_config.coordination_mode == _CM.SWARM):
+                    self.bot_config.attack_mode.mode = "dispersed"
+                    logging.info(
+                        "[AdaptiveController] HIGH pressure detected: "
+                        "temporarily switching SWARM → DISPERSED"
+                    )
+
+                # 注入规避补丁到 bot_cluster（在提示词末尾追加规避指令）
+                self.bot_cluster.set_evasion_patch(self.adaptive_controller.get_evasion_patch())
+
+                # 调整集群规模（HIGH 压力时降至 50%，降低攻击频率）
+                _effective_attack_size = self.adaptive_controller.get_effective_cluster_size(
+                    self.fake_news_attack_size
+                )
+
+                if pressure != PressureLevel.LOW:
+                    logging.info(
+                        f"[AdaptiveController] Pressure={pressure.value} | "
+                        f"role_dist={effective_role_dist} | "
+                        f"mode={self.bot_config.attack_mode.mode} | "
+                        f"attack_size={_effective_attack_size}/{self.fake_news_attack_size} | "
+                        f"evasion={'active' if self.adaptive_controller.get_evasion_patch() else 'off'}"
+                    )
+
             # Unified result collection
             attacked_posts: List[Dict[str, Any]] = []
             skipped_posts: List[Dict[str, Any]] = []
@@ -972,7 +1021,7 @@ Write your hostile post:"""
                             representative['post_id'],
                             representative['content'],
                             representative['author_id'],
-                            override_cluster_size=self.fake_news_attack_size,
+                            override_cluster_size=_effective_attack_size,
                             post_pool=fake_news_pool,
                         )
                         if res.get('success'):
@@ -1004,7 +1053,7 @@ Write your hostile post:"""
                                 pid,
                                 content,
                                 author_id,
-                                override_cluster_size=self.fake_news_attack_size,
+                                override_cluster_size=_effective_attack_size,
                             )
                             if res.get('success'):
                                 attacked_posts.append(
@@ -1030,11 +1079,30 @@ Write your hostile post:"""
             # Step 2 removed: no additional hot posts are attacked
             max_allowed = len(recent_fake_ids)
 
-            # Time-step wrap-up: do not increment leader comments dynamically on the platform
+            # === 攻击结束：恢复原始配置 + 触发异步反思 ===
+            # 恢复被自适应控制器临时修改的配置（mode、role_distribution）
+            self.bot_config.attack_mode.mode = _orig_mode
+            self.bot_config.role_distribution = _orig_role_dist
+            # 清除规避补丁（避免影响下一步的非自适应调用）
+            self.bot_cluster.set_evasion_patch("")
 
-            # Remove the batch completion logging per your request
+            # HIGH 压力时触发 LLM 反思（异步，不阻塞主流程）
+            # 参考 MultiAgent4Collusion update_reflection_memory(ban=True) 的异步更新机制
+            if self.bot_config.adaptive.enabled:
+                attack_summary = {
+                    "total_comments": sum(
+                        len(r.get("comment_ids", [])) for r in attack_results
+                        if isinstance(r, dict)
+                    )
+                }
+                asyncio.ensure_future(
+                    self.adaptive_controller.maybe_generate_reflection(
+                        attack_results=attack_summary,
+                        moderation_stats=self.adaptive_controller._last_moderation_stats,
+                    )
+                )
 
-            return {
+            result = {
                 "success": True,
                 "total_targets": len(recent_fake_ids),
                 "max_allowed": max_allowed,
@@ -1044,9 +1112,17 @@ Write your hostile post:"""
                 "skipped_posts": skipped_posts,
                 "attack_results": attack_results
             }
+            return result
 
         except Exception as e:
             logging.error(f"Batch attack failed: {e}")
+            # 确保即使出现异常也恢复原始配置
+            try:
+                self.bot_config.attack_mode.mode = _orig_mode
+                self.bot_config.role_distribution = _orig_role_dist
+                self.bot_cluster.set_evasion_patch("")
+            except Exception:
+                pass
             return {
                 "success": False,
                 "error": str(e)
