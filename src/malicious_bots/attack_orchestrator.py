@@ -38,14 +38,16 @@ class AttackOrchestrator:
         results = await orchestrator.execute(post_id, content, cluster_size)
     """
 
-    def __init__(self, bot_cluster, config):
+    def __init__(self, bot_cluster, config, conn=None):
         """
         Args:
             bot_cluster: SimpleMaliciousCluster 实例
             config     : MaliciousBotConfig 实例
+            conn       : SQLite 连接（ChainStrategy 需要用于写入 leader post/user）
         """
         self.bot_cluster = bot_cluster
         self.config = config
+        self.conn = conn  # 传递给 ChainStrategy，其他策略不使用
 
         # 预实例化策略对象（无状态，可复用）
         self._swarm_strategy = SwarmStrategy()
@@ -63,6 +65,7 @@ class AttackOrchestrator:
         target_content: str,
         cluster_size: int,
         post_pool: Optional[List[Dict[str, Any]]] = None,
+        time_step: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         根据当前配置的协同模式执行攻击，返回评论结果列表。
@@ -72,6 +75,7 @@ class AttackOrchestrator:
             target_content: 目标帖子内容
             cluster_size  : 本轮参与攻击的 bot 总数
             post_pool     : 帖子候选池（DISPERSED 模式使用），可为 None
+            time_step     : 当前仿真时间步（CHAIN 模式用于写入 post_timesteps）
 
         Returns:
             List[Dict]: 各 bot 生成的评论结果。
@@ -116,6 +120,8 @@ class AttackOrchestrator:
                 cluster_size=cluster_size,
                 bot_cluster=self.bot_cluster,
                 chain_config=self.config.chain_config,
+                conn=self.conn,
+                time_step=time_step,
             )
 
         else:

@@ -59,8 +59,8 @@ class MaliciousBotManager:
         # 攻击模式配置：使用包内默认值（蜂群式），不依赖 experiment_config.json 新字段
         self.bot_config: MaliciousBotConfig = DEFAULT_CONFIG
 
-        # 统一攻击策略路由器
-        self.orchestrator = AttackOrchestrator(self.bot_cluster, self.bot_config)
+        # 统一攻击策略路由器（传入 conn 供 ChainStrategy 写入 leader post/user）
+        self.orchestrator = AttackOrchestrator(self.bot_cluster, self.bot_config, conn=self.conn)
 
         self._create_database_tables()
         self._init_comment_moderation_policy()
@@ -384,6 +384,7 @@ Write your hostile post:"""
                 target_content=content,
                 cluster_size=used_cluster_size,
                 post_pool=post_pool,
+                time_step=getattr(self, 'current_time_step', None),
             )
 
             # Record the attack
