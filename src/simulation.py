@@ -1124,7 +1124,7 @@ class Simulation:
 
         print(f"📊 Total parallel tasks: {len(tasks)}")
         print(f"   👥 Regular user tasks: {len(normal_user_tasks)}")
-        if self.malicious_bot_manager and self.malicious_bot_manager.enabled:
+        if self.malicious_bot_manager and control_flags.attack_enabled:
             print(f"   🔥 Malicious bot tasks: {len([t for t in tasks if 'malicious' in str(t)])}")
         if self.opinion_balance_manager and self.opinion_balance_manager.enabled:
             print(f"   🔄 amplifier agent tasks: {len([t for t in tasks if 'amplifier' in str(t)])}")

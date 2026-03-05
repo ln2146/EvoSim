@@ -15,6 +15,8 @@ from datetime import datetime
 
 import os
 from .simple_malicious_agent import SimpleMaliciousCluster, MaliciousPersona
+from .config import MaliciousBotConfig, DEFAULT_CONFIG
+from .attack_orchestrator import AttackOrchestrator
 
 class MaliciousBotManager:
     """Manages scheduled malicious bot activity and supporting utilities."""
@@ -39,10 +41,19 @@ class MaliciousBotManager:
         # 始终初始化 bot_cluster，不管配置如何
         # 实际的执行控制由 control_flags.attack_enabled 在运行时决定
         self.bot_cluster = SimpleMaliciousCluster(self.cluster_size)
+
+        # 攻击模式配置：使用包内默认值（蜂群式），不依赖 experiment_config.json 新字段
+        self.bot_config: MaliciousBotConfig = DEFAULT_CONFIG
+
+        # 统一攻击策略路由器
+        self.orchestrator = AttackOrchestrator(self.bot_cluster, self.bot_config)
+
         self._create_database_tables()
         logging.info(f"🔥 Malicious bot manager initialized with cluster size: {self.cluster_size}")
+        logging.info(f"   Coordination mode: {self.bot_config.coordination_mode.value}")
         logging.info(f"   Runtime control via control_flags.attack_enabled")
         print(f"Malicious bot cluster initialized. Cluster size: {self.cluster_size}")
+        print(f"   Coordination mode: {self.bot_config.coordination_mode.value}")
         print(f"💡 Note: Actual attack execution is controlled by control_flags.attack_enabled")
     
     def _create_database_tables(self):
@@ -244,8 +255,12 @@ Write your hostile post:"""
             # Coordinate cluster size: prioritize override size, fallback to configured cluster_size
             used_cluster_size = override_cluster_size if override_cluster_size is not None else self.cluster_size
 
-            # Coordinate cluster attack - use the selected attack size
-            attack_results = await self.bot_cluster.coordinate_attack(post_id, content, used_cluster_size)
+            # Coordinate cluster attack via orchestrator（支持角色分化 + 策略路由）
+            attack_results = await self.orchestrator.execute(
+                target_post_id=post_id,
+                target_content=content,
+                cluster_size=used_cluster_size,
+            )
 
             # Record the attack
             attack_id = self._record_attack(post_id, user_id, attack_results, used_cluster_size)
@@ -396,13 +411,16 @@ Write your hostile post:"""
             batch_comments.append(comment_data)
 
             # Malicious comment record data
+            # attack_type 优先使用 bot_role（角色叠加层提供），兜底用 "unknown"
+            bot_role_for_record = attack.get("bot_role", attack.get("attack_type", "unknown"))
+            disguise_level = attack.get("disguise_level", attack.get("intensity", "medium"))
             malicious_record = (
                 attack_id,
                 comment_id,
                 content,
                 persona_used,
-                attack.get("attack_type", "unknown"),
-                attack.get("intensity", "medium"),
+                bot_role_for_record,
+                disguise_level,
                 selected_model
             )
             batch_malicious_records.append(malicious_record)
@@ -421,8 +439,10 @@ Write your hostile post:"""
 
             # Display malicious comment (consistent with regular user format, show full content)
             try:
-                # Console output format consistent with regular users, with prefix marker
-                print(f"🔥 {malicious_user_id} ({selected_model}) commented on post {post_id}: {content}")
+                # 角色标签：显示战术角色名称
+                bot_role = attack.get("bot_role", "")
+                role_label = f"[{bot_role}] " if bot_role else ""
+                print(f"🔥 {malicious_user_id} {role_label}({selected_model}) commented on post {post_id}: {content}")
             except Exception:
                 pass
 
@@ -681,8 +701,6 @@ Write your hostile post:"""
             print(f"   Like verification failed: {e}")
     def get_attack_statistics(self) -> Dict[str, Any]:
         """Collect basic statistics about past malicious bot activity."""
-        if not self.enabled:
-            return {"enabled": False}
 
         cursor = self.conn.cursor()
         
@@ -719,9 +737,6 @@ Write your hostile post:"""
     
     def mark_intervention_triggered(self, post_id: str):
         """Record that an intervention was triggered for a specific post."""
-        if not self.enabled:
-            return
-        
         cursor = self.conn.cursor()
         cursor.execute('''
             UPDATE malicious_attacks 
