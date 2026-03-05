@@ -113,6 +113,10 @@ class MaliciousBotManager:
             logging.warning(f"Malicious user {user_id} is banned; comment blocked.")
             return True
 
+        import control_flags
+        if not control_flags.moderation_enabled:
+            return False
+
         if not self._comment_keyword_provider:
             return False
 
@@ -1110,7 +1114,6 @@ Write your hostile post:"""
         # The top posts are re-evaluated every timestep and attacked if they satisfy the conditions
 
         return True
-
 
 
 

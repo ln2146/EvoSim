@@ -9,6 +9,7 @@ SRC_DIR = os.path.join(SCRIPT_DIR, 'src')
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+import control_flags
 from agent_user import AgentUser
 
 
@@ -62,6 +63,7 @@ class CommentModerationEnforcementTest(unittest.TestCase):
              patch("agent_user.Utils.generate_formatted_id", return_value="comment-001"), \
              patch("agent_user.fetch_all", return_value=[]), \
              patch("moderation.providers.keyword_provider.KeywordProvider.check", return_value=None), \
+             patch.object(control_flags, "moderation_enabled", True), \
              patch("concurrent.futures.ThreadPoolExecutor", return_value=self._ImmediateExecutor()), \
              patch("asyncio.create_task", side_effect=self._safe_create_task):
             result = user.create_comment("post-1", "hello")
@@ -89,6 +91,7 @@ class CommentModerationEnforcementTest(unittest.TestCase):
              patch("agent_user.Utils.generate_formatted_id", return_value="comment-002"), \
              patch("agent_user.fetch_all", return_value=[]), \
              patch("moderation.providers.keyword_provider.KeywordProvider.check", return_value=verdict), \
+             patch.object(control_flags, "moderation_enabled", True), \
              patch("concurrent.futures.ThreadPoolExecutor", return_value=self._ImmediateExecutor()), \
              patch("asyncio.create_task", side_effect=self._safe_create_task):
             result = user.create_comment("post-1", "bad words")
@@ -121,6 +124,7 @@ class CommentModerationEnforcementTest(unittest.TestCase):
              patch("agent_user.Utils.generate_formatted_id", return_value="comment-003"), \
              patch("agent_user.fetch_all", return_value=[]), \
              patch("moderation.providers.keyword_provider.KeywordProvider.check", return_value=verdict), \
+             patch.object(control_flags, "moderation_enabled", True), \
              patch("concurrent.futures.ThreadPoolExecutor", return_value=self._ImmediateExecutor()), \
              patch("asyncio.create_task", side_effect=self._safe_create_task):
             result = user.create_comment("post-1", "bad words again")
@@ -141,6 +145,30 @@ class CommentModerationEnforcementTest(unittest.TestCase):
         self.assertIsNone(result)
         self.assertIn("账号已封禁", user.last_comment_moderation_message)
         self.assertEqual(0, mock_exec.call_count)
+
+    def test_moderation_disabled_should_not_block_keyword_comment(self):
+        user = self._make_user()
+
+        fetch_one_side_effect = [
+            {"status": "active", "comment_violation_count": 0},
+            {"author_id": "post-author", "content": "post content"},
+        ]
+        verdict = SimpleNamespace(detected_keywords=["kill yourself"])
+
+        with patch("agent_user.fetch_one", side_effect=fetch_one_side_effect), \
+             patch("agent_user.execute_query", return_value=True) as mock_exec, \
+             patch("agent_user.Utils.generate_formatted_id", return_value="comment-004"), \
+             patch("agent_user.fetch_all", return_value=[]), \
+             patch("moderation.providers.keyword_provider.KeywordProvider.check", return_value=verdict), \
+             patch.object(control_flags, "moderation_enabled", False), \
+             patch("concurrent.futures.ThreadPoolExecutor", return_value=self._ImmediateExecutor()), \
+             patch("asyncio.create_task", side_effect=self._safe_create_task):
+            result = user.create_comment("post-1", "bad words")
+
+        self.assertEqual("comment-004", result)
+        self.assertIsNone(user.last_comment_moderation_message)
+        sql_text = "\n".join(call.args[0] for call in mock_exec.call_args_list if call.args)
+        self.assertNotIn("DELETE FROM comments", sql_text)
 
 
 if __name__ == "__main__":

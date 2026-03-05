@@ -3,12 +3,14 @@ import sqlite3
 import sys
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC_DIR = os.path.join(SCRIPT_DIR, "src")
 if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
+import control_flags
 from malicious_bots.malicious_bot_manager import MaliciousBotManager
 
 
@@ -59,13 +61,14 @@ class MaliciousCommentModerationTest(unittest.TestCase):
         self._insert_user("u1", status="banned", violations=5)
         cur = self.conn.cursor()
 
-        blocked = self.manager._check_comment_policy_violation(
-            cursor=cur,
-            user_id="u1",
-            post_id="p1",
-            comment_id="c1",
-            content="hello",
-        )
+        with patch.object(control_flags, "moderation_enabled", True):
+            blocked = self.manager._check_comment_policy_violation(
+                cursor=cur,
+                user_id="u1",
+                post_id="p1",
+                comment_id="c1",
+                content="hello",
+            )
 
         self.assertTrue(blocked)
 
@@ -76,13 +79,14 @@ class MaliciousCommentModerationTest(unittest.TestCase):
         )
         cur = self.conn.cursor()
 
-        blocked = self.manager._check_comment_policy_violation(
-            cursor=cur,
-            user_id="u2",
-            post_id="p1",
-            comment_id="c2",
-            content="kill",
-        )
+        with patch.object(control_flags, "moderation_enabled", True):
+            blocked = self.manager._check_comment_policy_violation(
+                cursor=cur,
+                user_id="u2",
+                post_id="p1",
+                comment_id="c2",
+                content="kill",
+            )
         self.conn.commit()
 
         self.assertTrue(blocked)
@@ -105,13 +109,14 @@ class MaliciousCommentModerationTest(unittest.TestCase):
         )
         cur = self.conn.cursor()
 
-        blocked = self.manager._check_comment_policy_violation(
-            cursor=cur,
-            user_id="u3",
-            post_id="p1",
-            comment_id="c3",
-            content="nazi",
-        )
+        with patch.object(control_flags, "moderation_enabled", True):
+            blocked = self.manager._check_comment_policy_violation(
+                cursor=cur,
+                user_id="u3",
+                post_id="p1",
+                comment_id="c3",
+                content="nazi",
+            )
         self.conn.commit()
 
         self.assertTrue(blocked)
@@ -131,19 +136,45 @@ class MaliciousCommentModerationTest(unittest.TestCase):
         )
         cur = self.conn.cursor()
 
-        blocked = self.manager._check_comment_policy_violation(
-            cursor=cur,
-            user_id="agentverse_news",
-            post_id="p1",
-            comment_id="c4",
-            content="kill",
-        )
+        with patch.object(control_flags, "moderation_enabled", True):
+            blocked = self.manager._check_comment_policy_violation(
+                cursor=cur,
+                user_id="agentverse_news",
+                post_id="p1",
+                comment_id="c4",
+                content="kill",
+            )
         self.conn.commit()
 
         self.assertFalse(blocked)
         row = self.conn.execute(
             "SELECT status, comment_violation_count FROM users WHERE user_id = ?",
             ("agentverse_news",),
+        ).fetchone()
+        self.assertEqual("active", row[0])
+        self.assertEqual(0, row[1])
+
+    def test_moderation_disabled_should_skip_keyword_block(self):
+        self._insert_user("u4", status="active", violations=0)
+        self.manager._comment_keyword_provider = SimpleNamespace(
+            check=lambda content, metadata=None: SimpleNamespace(detected_keywords=["kill"])
+        )
+        cur = self.conn.cursor()
+
+        with patch.object(control_flags, "moderation_enabled", False):
+            blocked = self.manager._check_comment_policy_violation(
+                cursor=cur,
+                user_id="u4",
+                post_id="p1",
+                comment_id="c5",
+                content="kill",
+            )
+        self.conn.commit()
+
+        self.assertFalse(blocked)
+        row = self.conn.execute(
+            "SELECT status, comment_violation_count FROM users WHERE user_id = ?",
+            ("u4",),
         ).fetchone()
         self.assertEqual("active", row[0])
         self.assertEqual(0, row[1])
