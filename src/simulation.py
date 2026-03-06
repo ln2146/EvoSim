@@ -31,6 +31,9 @@ from tracked_opinion_helper import (
 # Moderation system
 from moderation import ModerationService, ModerationConfig, load_config_from_env
 
+# Snapshot system
+from snapshot_manager import create_snapshot_manager
+
 
 class Simulation:
     """
@@ -45,7 +48,7 @@ class Simulation:
 
         # Generate timestamp for this run
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+
         # Track injected fake-news timesteps (used for delayed official explanation attachment)
         # {post_id: injection_timestep (1-based)}
         self.fake_news_injection_timesteps = {}
@@ -53,10 +56,15 @@ class Simulation:
         # Initialize database manager
         # Use path relative to project root (parent of src/)
         project_root = os.path.dirname(os.path.dirname(__file__))
+        self.project_root = project_root
         db_path = os.path.join(project_root, 'database', 'simulation.db')
         self.db_manager = DatabaseManager(db_path, self.reset_db)
         self.conn = self.db_manager.get_connection()
         self.db_path = self.db_manager.db_path
+
+        # Initialize snapshot manager
+        self.snapshot_manager = create_snapshot_manager(project_root, db_path)
+        self.snapshot_enabled = config.get('snapshot_enabled', True)  # 默认启用快照
 
         # Replace user management with UserManager
         self.user_manager = UserManager(config, self.db_manager)
@@ -210,6 +218,15 @@ class Simulation:
     
     async def run(self, num_time_steps: int):
         """Run the simulation."""
+        # 创建快照会话（如果启用）
+        if self.snapshot_enabled:
+            try:
+                self.snapshot_manager.create_session()
+                logging.info("✅ 快照系统已启动，将在每个时间步结束后自动保存")
+            except Exception as e:
+                logging.warning(f"快照会话创建失败: {e}")
+                self.snapshot_enabled = False
+
         new_user_config = self.config.get('new_users', {})
         add_new_users_probability = new_user_config.get('add_probability', 0.9)
         new_user_follow_probability = new_user_config.get('follow_probability', 0.0)
@@ -493,6 +510,19 @@ class Simulation:
                 )
             except Exception as _monitor_err:
                 logging.debug(f"Defense monitoring skipped: {_monitor_err}")
+
+            # 保存tick快照（在tick结束时）
+            if self.snapshot_enabled:
+                try:
+                    additional_info = {
+                        "tick": step + 1,
+                        "timestamp": datetime.now().isoformat(),
+                        "user_count": len(self.users),
+                        "post_count": current_post_count
+                    }
+                    self.snapshot_manager.save_tick_snapshot(step + 1, additional_info)
+                except Exception as e:
+                    logging.warning(f"Failed to save snapshot for tick {step + 1}: {e}")
 
             logging.info("")  # Add a newline for readability between time steps
 

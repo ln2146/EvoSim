@@ -809,6 +809,16 @@ if __name__ == "__main__":
     reset_manager = DatabaseManager(db_path, reset_db=True)
     reset_manager.close()
 
+    # 清理所有旧快照（main.py启动时清理）
+    try:
+        from snapshot_manager import create_snapshot_manager
+        project_root = os.path.dirname(os.path.dirname(__file__))
+        snapshot_mgr = create_snapshot_manager(project_root, db_path)
+        snapshot_mgr.cleanup_all_snapshots()
+        print("🗑️  已清理所有旧快照数据")
+    except Exception as e:
+        print(f"⚠️  清理快照失败: {e}")
+
     # Show persona configuration info
     print_persona_config_info(config)
 
