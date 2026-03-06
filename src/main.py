@@ -11,7 +11,7 @@ from datetime import datetime
 
 # Runtime control API
 import threading
-from typing import Optional
+from typing import Optional, Literal
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,6 +48,12 @@ class ToggleRequest(BaseModel):
     enabled: bool
 
 
+class AttackModeRequest(BaseModel):
+    """Request body for setting malicious attack coordination mode."""
+
+    mode: Literal["swarm", "dispersed", "chain"]
+
+
 class PostCommentsAnalysisRequest(BaseModel):
     """Request body for analyzing a single post and its comments."""
 
@@ -67,6 +73,22 @@ def set_attack_flag(body: ToggleRequest):
 
     control_flags.attack_enabled = bool(body.enabled)
     return {"attack_enabled": control_flags.attack_enabled}
+
+
+@control_app.post("/control/attack-mode")
+def set_attack_mode(body: AttackModeRequest):
+    """Set malicious attack coordination mode at runtime."""
+
+    mode = str(body.mode).strip().lower()
+
+    # Single source of truth for runtime status
+    control_flags.attack_mode = mode
+
+    # Sync strategy router config used by malicious bot manager
+    from malicious_bots.config import DEFAULT_CONFIG
+    DEFAULT_CONFIG.attack_mode.mode = mode
+
+    return {"attack_mode": control_flags.attack_mode}
 
 
 @control_app.post("/control/aftercare")

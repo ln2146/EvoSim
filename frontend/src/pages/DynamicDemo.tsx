@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ElementType, ty
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { Activity, Play, Square, Shield, Bug, Sparkles, Flame, MessageSquare, ArrowLeft, ThumbsUp, Share2, MessageCircle, BarChart3, Eye, RefreshCw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { createPortal } from 'react-dom'
 import { createInitialFlowState, routeLogLine, stripLogPrefix, parseLogTimestampMs, type FlowState, type Role } from '../lib/interventionFlow/logRouter'
 import { createEventSourceLogStream, createSimulatedLogStream, type LogStream } from '../lib/interventionFlow/logStream'
 import { computeEffectiveRole, nextSelectedRoleOnTabClick } from '../lib/interventionFlow/selection'
@@ -25,7 +26,8 @@ import { useLeaderboard } from '../hooks/useLeaderboard'
 import { usePostDetail } from '../hooks/usePostDetail'
 import { usePostComments } from '../hooks/usePostComments'
 import { usePostAnalysis } from '../hooks/usePostAnalysis'
-import { getControlFlags, setModerationFlag } from '../services/api'
+import { setAttackMode, setModerationFlag } from '../services/api'
+import { getAttackModeLabel, resolveAttackToggleAction, type AttackMode } from '../lib/attackModeToggle'
 
 const DEMO_BACKEND_LOG_LINES: string[] = [
   '2026-01-28 21:13:09,286 - INFO - 📊 Phase 1: perception and decision',
@@ -357,6 +359,8 @@ export default function DynamicDemo() {
 
   const [isRunning, setIsRunning] = useState(false)
   const [enableAttack, setEnableAttack] = useState(false)
+  const [attackMode, setAttackModeState] = useState<AttackMode | null>(null)
+  const [attackModeDialogOpen, setAttackModeDialogOpen] = useState(false)
   const [enableAftercare, setEnableAftercare] = useState(false)
   const [enableEvoCorps, setEnableEvoCorps] = useState(false)
   const [enableModeration, setEnableModeration] = useState(false)
@@ -406,6 +410,7 @@ export default function DynamicDemo() {
         // 只在演示运行时同步控制标志，避免覆盖用户在启动前预置的状态
         if (bothRunning && data.control_flags) {
           setEnableAttack(data.control_flags.attack_enabled ?? false)
+          setAttackModeState((data.control_flags.attack_mode as AttackMode | undefined) ?? 'swarm')
           setEnableAftercare(data.control_flags.aftercare_enabled ?? false)
           setEnableModeration(data.control_flags.moderation_enabled ?? false)
         }
@@ -586,6 +591,7 @@ export default function DynamicDemo() {
             if (data.success) {
               // 捕获用户预置的标志（在 setIsRunning 前快照，避免轮询覆盖）
               const preAttack = enableAttack
+              const preAttackMode = attackMode
               const preAftercare = enableAftercare
               const preModeration = enableModeration
               const preEvoCorps = enableEvoCorps
@@ -609,10 +615,18 @@ export default function DynamicDemo() {
               setTimeout(async () => {
                 const syncs: Array<Promise<unknown>> = []
                 if (preAttack) {
-                  syncs.push(fetch('http://localhost:8000/control/attack', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: true }),
-                  }).catch(() => {}))
+                  if (preAttackMode) {
+                    await fetch('http://localhost:8000/control/attack-mode', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ mode: preAttackMode }),
+                    }).catch(() => {})
+                  }
+                  syncs.push(
+                    fetch('http://localhost:8000/control/attack', {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ enabled: true }),
+                    }).catch(() => {})
+                  )
                 }
                 if (!preAftercare) {
                   syncs.push(fetch('http://localhost:8000/control/aftercare', {
@@ -705,27 +719,86 @@ export default function DynamicDemo() {
         }}
         onBack={(path) => navigate(path || '/')}
         enableAttack={enableAttack}
+        attackMode={attackMode}
+        attackModeDialogOpen={attackModeDialogOpen}
         enableAftercare={enableAftercare}
         enableEvoCorps={enableEvoCorps}
         enableModeration={enableModeration}
+        onSelectAttackMode={(mode) => {
+          setAttackModeState(mode)
+          setAttackModeDialogOpen(false)
+          void (async () => {
+            const action = resolveAttackToggleAction({
+              enabled: enableAttack,
+              selectedMode: mode,
+            })
+            if (action.type !== 'enable') return
+
+            // 演示未运行时：仅预置本地状态，启动后同步到后端
+            if (!isRunning) {
+              setEnableAttack(true)
+              return
+            }
+
+            if (isTogglingAttack) return
+            setEnableAttack(true)
+            setIsTogglingAttack(true)
+            try {
+              await setAttackMode(mode)
+              const response = await fetch('http://localhost:8000/control/attack', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: true }),
+              })
+              const data = await response.json()
+              if (response.ok && data.attack_enabled !== undefined) {
+                setEnableAttack(Boolean(data.attack_enabled))
+                alert(`✅ Malicious attack enabled (${getAttackModeLabel(mode)})`)
+              } else {
+                setEnableAttack(false)
+                throw new Error('API 返回异常')
+              }
+            } catch (error) {
+              setEnableAttack(false)
+              alert(`❌ 操作失败：${error instanceof Error ? error.message : '网络错误'}`)
+            } finally {
+              setIsTogglingAttack(false)
+            }
+          })()
+        }}
+        onCloseAttackModeDialog={() => setAttackModeDialogOpen(false)}
         onToggleAttack={async () => {
           if (isTogglingAttack) return
 
-          // 演示未运行时：仅预置本地状态，启动后自动同步到后端
-          if (!isRunning) {
-            setEnableAttack(!enableAttack)
+          const action = resolveAttackToggleAction({
+            enabled: enableAttack,
+            selectedMode: attackMode,
+          })
+
+          if (action.type === 'open_mode_dialog') {
+            setAttackModeDialogOpen(true)
             return
           }
 
-          // 如果当前是启用状态，显示确认弹窗
-          if (enableAttack) {
-            if (!confirm('是否确认关闭恶意水军攻击？')) {
+          if (action.type === 'enable') {
+            setAttackModeDialogOpen(true)
+            return
+          }
+
+          // 当前为启用状态，二次点击即关闭当前模式
+          if (action.type === 'disable') {
+            if (!confirm('是否确认关闭恶意攻击模式？')) {
+              return
+            }
+            if (!isRunning) {
+              setEnableAttack(false)
+              setAttackModeState(null)
               return
             }
           }
 
           // 乐观更新：先改变状态，让 UI 立即响应
-          const newEnabled = !enableAttack
+          const newEnabled = false
           setEnableAttack(newEnabled)
 
           setIsTogglingAttack(true)
@@ -744,12 +817,16 @@ export default function DynamicDemo() {
             if (response.ok && data.attack_enabled !== undefined) {
               // 以服务器返回值为准
               setEnableAttack(data.attack_enabled)
+              if (!data.attack_enabled) {
+                setAttackModeState(null)
+              }
 
               // 显示成功提示
               if (data.attack_enabled) {
-                alert('✅ 恶意水军攻击已开启')
+                alert('✅ Malicious attack enabled')
               } else {
-                alert('✅ 恶意水军攻击已关闭')
+                const modeText = attackMode ? ` (${getAttackModeLabel(attackMode)})` : ''
+                alert(`✅ Malicious attack disabled${modeText}`)
               }
             } else {
               // API 返回异常，回滚
@@ -1045,10 +1122,14 @@ function DynamicDemoHeader({
   onStop,
   onBack,
   enableAttack,
+  attackMode,
+  attackModeDialogOpen,
   enableAftercare,
   enableEvoCorps,
   enableModeration,
   onToggleAttack,
+  onSelectAttackMode,
+  onCloseAttackModeDialog,
   onToggleAftercare,
   onToggleEvoCorps,
   onToggleModeration,
@@ -1060,10 +1141,14 @@ function DynamicDemoHeader({
   onStop: () => void
   onBack: (path?: string) => void
   enableAttack: boolean
+  attackMode: AttackMode | null
+  attackModeDialogOpen: boolean
   enableAftercare: boolean
   enableEvoCorps: boolean
   enableModeration: boolean
   onToggleAttack: () => void | Promise<void>
+  onSelectAttackMode: (mode: AttackMode) => void
+  onCloseAttackModeDialog: () => void
   onToggleAftercare: () => void | Promise<void>
   onToggleEvoCorps: () => void | Promise<void>
   onToggleModeration: () => void | Promise<void>
@@ -1146,7 +1231,71 @@ function DynamicDemoHeader({
           </button>
         </div>
       </div>
+
+      {attackModeDialogOpen && (
+        <AttackModeDialog
+          onSelect={onSelectAttackMode}
+          onClose={onCloseAttackModeDialog}
+        />
+      )}
     </div>
+  )
+}
+
+function AttackModeDialog({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (mode: AttackMode) => void
+  onClose: () => void
+}) {
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] bg-slate-700/22 backdrop-blur-[2px] flex items-start justify-center pt-10 px-6 pb-6">
+      <div className="w-full max-w-3xl rounded-3xl border border-slate-200/85 bg-gradient-to-br from-slate-100/97 via-slate-50/96 to-blue-50/94 shadow-[0_28px_90px_rgba(15,23,42,0.18)] p-10">
+        <h3 className="text-3xl font-bold text-slate-800">选择恶意攻击模式</h3>
+        <p className="text-base text-slate-600 mt-2">请选择本次开启时使用的攻击协同模式。</p>
+
+        <div className="mt-6 grid grid-cols-1 gap-4">
+          <button
+            type="button"
+            onClick={() => onSelect('swarm')}
+            className="w-full text-left rounded-2xl border border-slate-200/90 bg-white/72 p-5 hover:border-blue-300 hover:bg-white/92 transition-all duration-200 hover:shadow-lg"
+          >
+            <div className="font-semibold text-xl text-slate-800">蜂群式</div>
+            <div className="text-sm text-slate-600 mt-1">集中攻击同一目标，放大互动信号。</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelect('dispersed')}
+            className="w-full text-left rounded-2xl border border-slate-200/90 bg-white/72 p-5 hover:border-blue-300 hover:bg-white/92 transition-all duration-200 hover:shadow-lg"
+          >
+            <div className="font-semibold text-xl text-slate-800">游离式</div>
+            <div className="text-sm text-slate-600 mt-1">分散到多条帖子，降低集中痕迹。</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelect('chain')}
+            className="w-full text-left rounded-2xl border border-slate-200/90 bg-white/72 p-5 hover:border-blue-300 hover:bg-white/92 transition-all duration-200 hover:shadow-lg"
+          >
+            <div className="font-semibold text-xl text-slate-800">链式传播</div>
+            <div className="text-sm text-slate-600 mt-1">主导账号→扩散账号→控评账号的三层协同攻击。</div>
+          </button>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   )
 }
 

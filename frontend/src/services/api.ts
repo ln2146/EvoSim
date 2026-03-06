@@ -243,6 +243,7 @@ export const getOpinionBalanceData = async (dbName: string) => {
 // Control Flags APIs
 export interface ControlFlags {
   attack_enabled: boolean
+  attack_mode?: 'swarm' | 'dispersed' | 'chain'
   aftercare_enabled: boolean
   auto_status: boolean | null
   moderation_enabled: boolean
@@ -256,6 +257,7 @@ export const getControlFlags = async (): Promise<ControlFlags> => {
     console.error('Failed to fetch control flags:', error)
     return {
       attack_enabled: false,
+      attack_mode: 'swarm',
       aftercare_enabled: false,
       auto_status: false,
       moderation_enabled: false,
@@ -279,6 +281,18 @@ export const setAttackFlag = async (enabled: boolean): Promise<{ attack_enabled:
     return response.data
   } catch (error) {
     console.error('Failed to set attack flag:', error)
+    throw error
+  }
+}
+
+export const setAttackMode = async (
+  mode: 'swarm' | 'dispersed' | 'chain'
+): Promise<{ attack_mode: 'swarm' | 'dispersed' | 'chain' }> => {
+  try {
+    const response = await api.post('/control/attack-mode', { mode })
+    return response.data
+  } catch (error) {
+    console.error('Failed to set attack mode:', error)
     throw error
   }
 }

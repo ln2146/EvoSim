@@ -12,13 +12,21 @@ Simulation code and launchers should *only* look at these flags when
 deciding whether to run malicious attacks, post‑hoc intervention, etc.
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Literal
 
 
 # Whether malicious bot attacks are allowed to run.
 # True  -> enable all malicious attack logic
 # False -> completely disable malicious attacks
 attack_enabled: bool = False
+
+
+# 当前恶意攻击协同模式。
+# 可选值：
+# - "swarm": 蜂群式
+# - "dispersed": 游离式
+# - "chain": 链式传播
+attack_mode: Literal["swarm", "dispersed", "chain"] = "swarm"
 
 
 # Whether post‑hoc intervention (third-party fact checking) is enabled.
@@ -53,11 +61,12 @@ auto_status: Optional[bool] = False
 moderation_enabled: bool = False
 
 
-def as_dict() -> Dict[str, Optional[bool]]:
+def as_dict() -> Dict[str, object]:
     """Return current flag values as a simple dict for APIs."""
 
     return {
         "attack_enabled": attack_enabled,
+        "attack_mode": attack_mode,
         "aftercare_enabled": aftercare_enabled,
         "auto_status": auto_status,
         "moderation_enabled": moderation_enabled,
