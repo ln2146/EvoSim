@@ -13,6 +13,7 @@ Default port is 8000.
 import sys
 import uvicorn
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -39,6 +40,11 @@ class ToggleRequest(BaseModel):
     enabled: bool
 
 
+class AttackModeRequest(BaseModel):
+    """Request body for malicious attack coordination mode."""
+    mode: str
+
+
 @control_app.get("/control/status")
 def get_control_status():
     """Return current values of all runtime control flags."""
@@ -59,6 +65,16 @@ def set_attack_flag(body: ToggleRequest):
     return {"status": "success", "attack_enabled": control_flags.attack_enabled}
 
 
+@control_app.post("/control/attack-mode")
+def set_attack_mode(body: AttackModeRequest):
+    """Set malicious bot coordination mode at runtime."""
+    mode = str(body.mode).strip().lower()
+    if mode not in {"swarm", "dispersed", "chain"}:
+        raise HTTPException(status_code=400, detail="invalid mode")
+    control_flags.attack_mode = mode
+    return {"status": "success", "attack_mode": control_flags.attack_mode}
+
+
 @control_app.post("/control/aftercare")
 def set_aftercare_flag(body: ToggleRequest):
     """Enable or disable fact-checking aftercare at runtime."""
@@ -69,8 +85,8 @@ def set_aftercare_flag(body: ToggleRequest):
 @control_app.post("/control/auto-status")
 def set_auto_status(body: ToggleRequest):
     """Enable or disable opinion-balance auto monitoring/intervention at runtime."""
-    control_flags.auto_status_enabled = body.enabled
-    return {"status": "success", "auto_status_enabled": control_flags.auto_status_enabled}
+    control_flags.auto_status = body.enabled
+    return {"status": "success", "auto_status": control_flags.auto_status}
 
 
 def main():
@@ -82,6 +98,7 @@ def main():
     print("  GET  /control/status")
     print("  POST /control/moderation")
     print("  POST /control/attack")
+    print("  POST /control/attack-mode")
     print("  POST /control/aftercare")
     print("  POST /control/auto-status")
 

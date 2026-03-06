@@ -289,8 +289,17 @@ export const setAttackMode = async (
   mode: 'swarm' | 'dispersed' | 'chain'
 ): Promise<{ attack_mode: 'swarm' | 'dispersed' | 'chain' }> => {
   try {
-    const response = await api.post('/control/attack-mode', { mode })
-    return response.data
+    const response = await fetch('http://localhost:8000/control/attack-mode', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ mode }),
+    })
+    if (!response.ok) {
+      throw new Error(`Request failed with status code ${response.status}`)
+    }
+    return await response.json()
   } catch (error) {
     console.error('Failed to set attack mode:', error)
     throw error
