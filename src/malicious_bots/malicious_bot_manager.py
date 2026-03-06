@@ -520,12 +520,13 @@ Write your hostile post:"""
                 }
 
                 cursor.execute('''
-                    INSERT INTO users (user_id, persona, creation_time)
-                    VALUES (?, ?, ?)
+                    INSERT INTO users (user_id, persona, creation_time, background_labels)
+                    VALUES (?, ?, ?, ?)
                 ''', (
                     malicious_user_id,
                     json.dumps(fake_persona),
-                    datetime.now().isoformat()
+                    datetime.now().isoformat(),
+                    '{"is_malicious_bot":true}',
                 ))
 
             # Prepare batch insertion data

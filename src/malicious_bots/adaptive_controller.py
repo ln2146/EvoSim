@@ -164,66 +164,88 @@ class AdaptiveController:
         """
         查询审核压力统计数据。
 
-        三路信号均与审核系统实际写入的数据库字段对齐：
+        三路信号数据源：
             信号 1（主）: posts.status / posts.moderation_action — 由 moderation/service.py 写入
-            信号 2（早期）: users.comment_violation_count > 0 — 由 _check_comment_policy_violation() 首次拦截时写入
-            信号 3（滞后）: users.status='banned' — 由 _check_comment_policy_violation() 第 3 次违规时写入
+                查询路径：malicious_comments → comments → posts（仅成功发布的评论）
+
+            信号 2（早期）+ 信号 3（滞后）:
+                使用 users.background_labels = {"is_malicious_bot": true} 标记所有水军账号
+                （含被拦截、从未成功发布评论的账号）。
+                - warned_bots: comment_violation_count > 0 OR user_actions.moderation_warning 存在
+                - banned_bots: users.status = 'banned'
+                查询路径：users JOIN user_actions（全量覆盖，无 malicious_comments 依赖）
+
+        total_bot_users 使用 background_labels 标记的全量水军数作为统一分母，
+        确保被拦截账号不从分母消失。
 
         Returns:
             {
-                "total_attacked_posts": int,   # 最近被攻击的目标帖子数（去重）
-                "moderated_posts": int,        # 其中被审核处理的帖子数
-                "total_bot_users": int,        # 最近活跃的水军用户数（有成功写入评论的）
-                "warned_bots": int,            # 其中评论被拦截至少 1 次的数量
-                "banned_bots": int,            # 其中被封禁的数量（≥3 次违规）
+                "total_bot_users": int,        # 全部水军用户数（含被拦截的）
+                "post_moderated_bots": int,    # 信号1：评论所在帖子被审核的bot数
+                "warned_bots": int,            # 信号2：评论被拦截过的bot数
+                "banned_bots": int,            # 信号3：被封号的bot数
             }
         """
         stats = {
             "total_bot_users": 0,
-            "post_moderated_bots": 0,   # 信号1：所评论的帖子被审核处理的bot数
-            "warned_bots": 0,           # 信号2：comment_violation_count > 0 的bot数
-            "banned_bots": 0,           # 信号3：status='banned' 的bot数
+            "post_moderated_bots": 0,
+            "warned_bots": 0,
+            "banned_bots": 0,
         }
         try:
             cursor = db_conn.cursor()
 
-            # 三路信号统一全量查询，分母统一为恶意用户总数（total_bot_users），
-            # 确保三路信号量纲一致、权重加权可比。
-            #
-            # 信号1（帖子被审核）：水军评论所在帖子被 HARD_TAKEDOWN / WARNING_LABEL /
-            #   VISIBILITY_DEGRADATION 处理。通过 comments.post_id → posts 关联取得。
-            # 信号2（评论被拦截）：users.comment_violation_count > 0，首次关键词命中即感知。
-            # 信号3（账号被封禁）：users.status = 'banned'，3 次违规后写入，最强确认信号。
-            #
-            # 全量历史查询（无水印）原因：被封号的账号无法再发评论，若只看增量窗口，
-            # 已封账号将从分母永久消失，导致封号信号随时间归零。
+            # ── 信号 1：帖子被审核的水军数 ────────────────────────────────────────
+            # 只有成功插入的评论才能关联到帖子，这符合语义：
+            # 只有实际发出的评论才会影响帖子热度，进而触发帖子审核。
             cursor.execute(
                 """
                 SELECT
-                    COUNT(DISTINCT c.author_id) AS total_bot_users,
                     COUNT(DISTINCT CASE
                         WHEN p.status = 'taken_down'
                           OR p.moderation_action IS NOT NULL
                         THEN c.author_id
-                    END) AS post_moderated_bots,
-                    COUNT(DISTINCT CASE
-                        WHEN u.comment_violation_count > 0 THEN c.author_id
-                    END) AS warned_bots,
-                    COUNT(DISTINCT CASE
-                        WHEN u.status = 'banned' THEN c.author_id
-                    END) AS banned_bots
+                    END) AS post_moderated_bots
                 FROM malicious_comments mc
-                JOIN comments c  ON mc.comment_id = c.comment_id
-                JOIN posts p     ON c.post_id = p.post_id
-                JOIN users u     ON c.author_id = u.user_id
+                JOIN comments c ON mc.comment_id = c.comment_id
+                JOIN posts p    ON c.post_id = p.post_id
                 """
             )
             row = cursor.fetchone()
             if row:
-                stats["total_bot_users"]      = int(row[0] or 0)
-                stats["post_moderated_bots"]  = int(row[1] or 0)
-                stats["warned_bots"]          = int(row[2] or 0)
-                stats["banned_bots"]          = int(row[3] or 0)
+                stats["post_moderated_bots"] = int(row[0] or 0)
+
+            # ── 信号 2 + 3 + 总量：基于 background_labels 标记的全量水军查询 ────
+            # background_labels = '{"is_malicious_bot":true}' 在 bot 用户创建时写入，
+            # 覆盖成功发帖和被完全拦截的两类账号，解决 malicious_comments JOIN 盲区。
+            # warned_bots：violation_count > 0（字段写入）OR moderation_warning（user_actions 写入）
+            # banned_bots：users.status = 'banned'
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT u.user_id) AS total_bot_users,
+                    COUNT(DISTINCT CASE
+                        WHEN u.comment_violation_count > 0
+                          OR ua.user_id IS NOT NULL
+                        THEN u.user_id
+                    END) AS warned_bots,
+                    COUNT(DISTINCT CASE
+                        WHEN u.status = 'banned' THEN u.user_id
+                    END) AS banned_bots
+                FROM users u
+                LEFT JOIN (
+                    SELECT DISTINCT user_id
+                    FROM user_actions
+                    WHERE action_type = 'moderation_warning'
+                ) ua ON ua.user_id = u.user_id
+                WHERE json_extract(u.background_labels, '$.is_malicious_bot') = 1
+                """
+            )
+            row = cursor.fetchone()
+            if row:
+                stats["total_bot_users"] = int(row[0] or 0)
+                stats["warned_bots"]     = int(row[1] or 0)
+                stats["banned_bots"]     = int(row[2] or 0)
 
         except Exception as e:
             logger.warning(f"[AdaptiveController] DB query error: {e}")
