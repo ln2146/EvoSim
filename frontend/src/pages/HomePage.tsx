@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Users, MessageSquare, ThumbsUp, FileText, Activity, TrendingUp, Zap, Shield, Bug, Eye, CheckCircle2 } from 'lucide-react'
-import { getDatabases, getDatabaseStats, DatabaseStats, getControlFlags, setModerationFlag, ControlFlags } from '../services/api'
+import { Users, MessageSquare, ThumbsUp, FileText, Activity, TrendingUp, Zap } from 'lucide-react'
+import { getDatabases, getDatabaseStats, DatabaseStats } from '../services/api'
 import DatabaseSelector from '../components/DatabaseSelector'
 
 export default function HomePage() {
@@ -13,31 +13,6 @@ export default function HomePage() {
     totalLikes: 0,
   })
   const [loading, setLoading] = useState(false)
-
-  // 控制标志状态
-  const [controlFlags, setControlFlags] = useState<ControlFlags>({
-    attack_enabled: false,
-    aftercare_enabled: false,
-    auto_status: false,
-    moderation_enabled: false,
-  })
-  const [loadingFlags, setLoadingFlags] = useState(false)
-
-  // 加载控制标志
-  useEffect(() => {
-    const loadControlFlags = async () => {
-      try {
-        const flags = await getControlFlags()
-        setControlFlags(flags)
-      } catch (error) {
-        console.error('Failed to load control flags:', error)
-      }
-    }
-    loadControlFlags()
-    // 定期刷新控制标志状态
-    const interval = setInterval(loadControlFlags, 5000)
-    return () => clearInterval(interval)
-  }, [])
 
   // 加载数据库列表
   useEffect(() => {
@@ -132,96 +107,6 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* 系统控制面板 */}
-      <div className="glass-card p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <Zap size={24} className="text-purple-600" />
-          <h2 className="text-xl font-bold text-slate-800">系统控制面板</h2>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* 审核系统开关 */}
-          <ControlToggleCard
-            title="内容审核"
-            description="启用内容审核系统（可见性降级、警告标签、硬删除）"
-            icon={Shield}
-            iconGradient="from-red-500 to-orange-500"
-            enabled={controlFlags.moderation_enabled}
-            onToggle={async (enabled) => {
-              setLoadingFlags(true)
-              try {
-                await setModerationFlag(enabled)
-                setControlFlags(prev => ({ ...prev, moderation_enabled: enabled }))
-              } catch (error) {
-                alert(`操作失败: ${error}`)
-              } finally {
-                setLoadingFlags(false)
-              }
-            }}
-            loading={loadingFlags}
-          />
-          {/* 恶意攻击开关 */}
-          <ControlToggleCard
-            title="恶意攻击"
-            description="启用恶意机器人生成和攻击"
-            icon={Bug}
-            iconGradient="from-purple-500 to-pink-500"
-            enabled={controlFlags.attack_enabled}
-            onToggle={async (enabled) => {
-              setLoadingFlags(true)
-              try {
-                await setAttackFlag(enabled)
-                setControlFlags(prev => ({ ...prev, attack_enabled: enabled }))
-              } catch (error) {
-                alert(`操作失败: ${error}`)
-              } finally {
-                setLoadingFlags(false)
-              }
-            }}
-            loading={loadingFlags}
-          />
-          {/* 事后干预开关 */}
-          <ControlToggleCard
-            title="事实核查"
-            description="启用第三方事实核查系统"
-            icon={Eye}
-            iconGradient="from-blue-500 to-cyan-500"
-            enabled={controlFlags.aftercare_enabled}
-            onToggle={async (enabled) => {
-              setLoadingFlags(true)
-              try {
-                await setAftercareFlag(enabled)
-                setControlFlags(prev => ({ ...prev, aftercare_enabled: enabled }))
-              } catch (error) {
-                alert(`操作失败: ${error}`)
-              } finally {
-                setLoadingFlags(false)
-              }
-            }}
-            loading={loadingFlags}
-          />
-          {/* 自动监控开关 */}
-          <ControlToggleCard
-            title="自动监控"
-            description="启用舆论平衡自动监控和干预"
-            icon={Activity}
-            iconGradient="from-green-500 to-emerald-500"
-            enabled={controlFlags.auto_status === true}
-            onToggle={async (enabled) => {
-              setLoadingFlags(true)
-              try {
-                await setAutoStatusFlag(enabled)
-                setControlFlags(prev => ({ ...prev, auto_status: enabled }))
-              } catch (error) {
-                alert(`操作失败: ${error}`)
-              } finally {
-                setLoadingFlags(false)
-              }
-            }}
-            loading={loadingFlags}
-          />
-        </div>
-      </div>
-
       {/* 统计卡片 */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {statsCards.map((stat, index) => {
@@ -257,56 +142,6 @@ export default function HomePage() {
             )
           })}
         </div>
-      </div>
-    </div>
-  )
-}
-
-// 控制开关卡片组件
-interface ControlToggleCardProps {
-  title: string
-  description: string
-  icon: ElementType
-  iconGradient: string
-  enabled: boolean
-  onToggle: (enabled: boolean) => void
-  loading?: boolean
-}
-
-function ControlToggleCard({ title, description, icon: Icon, iconGradient, enabled, onToggle, loading = false }: ControlToggleCardProps) {
-  return (
-    <div className={`glass-card p-5 transition-all duration-200 ${enabled ? 'ring-2 ring-green-400' : ''}`}>
-      <div className="flex items-start justify-between mb-3">
-        <div className={`w-12 h-12 rounded-xl bg-gradient-to-r ${iconGradient} flex items-center justify-center shadow-lg`}>
-          <Icon size={24} className="text-white" />
-        </div>
-        <button
-          onClick={() => onToggle(!enabled)}
-          disabled={loading}
-          className={`relative w-16 h-8 rounded-full transition-all duration-200 ${
-            enabled ? 'bg-green-500' : 'bg-slate-300'
-          } ${loading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:scale-105'}`}
-        >
-          <div
-            className={`absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow-md transition-transform duration-200 ${
-              enabled ? 'translate-x-8' : 'translate-x-0'
-            }`}
-          />
-        </button>
-      </div>
-      <h3 className="text-lg font-semibold text-slate-800 mb-1">{title}</h3>
-      <p className="text-sm text-slate-600 mb-2">{description}</p>
-      <div className="flex items-center gap-2 text-sm">
-        {enabled ? (
-          <>
-            <CheckCircle2 size={16} className="text-green-600" />
-            <span className="text-green-600 font-medium">已启用</span>
-          </>
-        ) : (
-          <>
-            <span className="text-slate-500">已禁用</span>
-          </>
-        )}
       </div>
     </div>
   )
