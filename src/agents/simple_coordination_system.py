@@ -5229,6 +5229,7 @@ class SimpleCoordinationSystem:
             
             if not analysis_result["alert_generated"]:
                 self.current_phase = "completed"
+                workflow_logger.info(f"✅ No intervention needed for post {content_id} - Workflow completed (no action taken)")
                 return {
                     "success": True,
                     "action_id": action_id,

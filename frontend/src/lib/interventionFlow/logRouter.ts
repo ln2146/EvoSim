@@ -630,6 +630,30 @@ export function routeLogLine(prev: FlowState, rawLine: string): FlowState {
     return next
   }
 
+  // No-intervention completion: freeze all 4 role cards so the user can see a complete
+  // round result (Analyst done + the other 3 roles explicitly marked as "not triggered").
+  // 修复：正则需要匹配开头可能有 emoji 的情况 (✅ No intervention needed...)
+  if (/No intervention needed for post.*Workflow completed/i.test(cleanLine) || /✅\s*No intervention needed/i.test(cleanLine)) {
+    const displayLine = compressDisplayLine(cleanLine)
+    const nextRoles = { ...prev.roles }
+
+    // Freeze Analyst with its accumulated analysis lines + the completion message.
+    const analyst = nextRoles.Analyst
+    const withLine = appendDuringWithCap(analyst, displayLine, maxDuringLines('Analyst'))
+    nextRoles.Analyst = freezeAfter(withLine, maxAfterLines('Analyst'))
+
+    // Mark the other 3 roles as "done / not triggered" so the tab indicators turn
+    // green and the cards show a clear "no action" placeholder instead of idle copy.
+    const noActionLine = '✅ 本轮分析完成，无需执行干预'
+    for (const role of ['Strategist', 'Leader', 'Amplifier'] as const) {
+      const card = nextRoles[role]
+      const withMsg = appendDuringWithCap(card, noActionLine, 1)
+      nextRoles[role] = freezeAfter(withMsg, 1)
+    }
+
+    return { ...prev, activeRole: null, roles: nextRoles }
+  }
+
   // Extract user-facing content that should be rendered in full (post body, leader comments, etc.)
   let nextContext = prev.context
   if (/^Post content:\s*/i.test(cleanLine)) {
