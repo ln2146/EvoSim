@@ -108,10 +108,10 @@ class AdaptiveConfig:
     enabled: bool = True
 
     # LOW / MEDIUM 分界线（压力系数低于此值视为 LOW）
-    low_pressure_threshold: float = 0.2
+    low_pressure_threshold: float = 0.10
 
     # MEDIUM / HIGH 分界线（压力系数超过此值视为 HIGH）
-    high_pressure_threshold: float = 0.5
+    high_pressure_threshold: float = 0.50
 
     # 是否启用 LLM 反思（HIGH 压力时调用 LLM 生成战术建议，False 则跳过以节省成本）
     reflection_enabled: bool = True

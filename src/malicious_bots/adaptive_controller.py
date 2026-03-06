@@ -8,27 +8,29 @@ AdaptiveController — 根据平台审核压力自动调整恶意水军攻击策
 
 压力感知数据源（三信号聚合，均与审核系统实际写入字段对齐）：
 
-    信号 1（帖子级审核率 0.5权重）— 主信号，与 moderation/service.py 实际写入路径匹配：
+    信号 1（帖子级审核率 0.30权重）— 增量水印窗口：
         JOIN malicious_attacks ↔ posts
-        统计攻击目标帖子中 posts.status='taken_down' 或 posts.moderation_action IS NOT NULL 的比例
-        → 无论 moderation_enabled 状态如何均有数据，只要审核系统运行就能感知
+        统计最近一步新增攻击目标帖子中 posts.status='taken_down' 或 moderation_action IS NOT NULL 的比例
+        → bots 主要攻击 fake news 帖，审核命中率有限；权重从 0.5 降至 0.30
 
-    信号 2（评论删除率 0.3权重）— 早期预警信号，需要 moderation_enabled=True 且命中关键词：
-        JOIN malicious_comments ↔ comments ↔ users
-        统计 users.comment_violation_count > 0 的水军比例（首次触发 → 评论被拦截，未写入 DB）
-        → 比封号信号快 2~3 个时间步，第一次评论被拦截即可感知
+    信号 2（评论警告率 0.25权重）— 全量历史查询：
+        JOIN malicious_comments ↔ comments ↔ users（无 WHERE 水印）
+        统计全部曾活跃水军中 comment_violation_count > 0 的比例
+        → 使用全量查询，避免增量窗口导致已被拦截账号消失
 
-    信号 3（用户封禁率 0.2权重）— 滞后信号，需要 moderation_enabled=True 且 3 次违规：
-        统计水军评论作者中 users.status='banned' 的比例
-        → 依赖 _check_comment_policy_violation() 积累到 3 次违规才触发，响应最慢
+    信号 3（用户封禁率 0.45权重）— 全量历史查询，最高权重：
+        统计全部曾活跃水军中 users.status='banned' 的比例
+        → 全量累计，封号账号的压力贡献不会随时间衰减为 0；封号是最确定的审核信号
 
-    注意：原设计的 malicious_attacks.triggered_intervention 字段已废弃，
-    因 mark_intervention_triggered() 从未被自动调用，该字段始终为 FALSE。
+    绝对触发条件（叠加在公式分值之上）：
+        ban_rate  >= 0.25  → 强制 HIGH（超过 25% 账号被封）
+        ban_rate  >= 0.10  → 强制 MEDIUM（超过 10% 账号被封）
+        warn_rate >= 0.30  → 强制 MEDIUM（超过 30% 账号被警告）
 
-压力等级：
-    LOW    (0.0 ~ low_pressure_threshold)   : 保持当前策略
-    MEDIUM (low ~ high_pressure_threshold)  : ConcernTroll 比例提升，降低 Agitator
-    HIGH   (> high_pressure_threshold)      : 策略切换 + 规避提示词 + 集群缩减 50% + LLM 反思
+压力等级（阈值已调低以适应小规模仿真）：
+    LOW    (0.0 ~ 0.05)  : 保持当前策略
+    MEDIUM (0.05 ~ 0.20) : ConcernTroll 比例提升，降低 Agitator；触发 LLM 定期反思
+    HIGH   (> 0.20)      : 策略切换 + 规避提示词 + 集群缩减 50% + LLM 定期反思
 """
 
 import asyncio
@@ -110,6 +112,32 @@ class AdaptiveController:
             else:
                 new_level = PressureLevel.LOW
 
+            # 绝对触发条件：各信号比例超过阈值时强制提升压力等级，
+            # 防止小样本或信号缺失导致公式分值无法越过阈值。
+            # 注意：水军机器人直接写入数据库，绕过审核 API，
+            # warned_bots/banned_bots 通常为 0，故帖子审核命中率需独立触发。
+            total_bots = max(stats.get("total_bot_users", 0), 1)
+            post_mod_rate = stats.get("post_moderated_bots", 0) / total_bots
+            ban_rate  = stats.get("banned_bots", 0) / total_bots
+            warn_rate = stats.get("warned_bots", 0) / total_bots
+
+            if ban_rate >= 0.25 or post_mod_rate >= 0.80:
+                # 超过 25% 封号，或 超过 80% 的 bot 评论所在帖子被审核 → HIGH
+                if new_level != PressureLevel.HIGH:
+                    logger.info(
+                        f"[AdaptiveController] Absolute trigger → forced HIGH "
+                        f"(ban_rate={ban_rate:.0%}, post_mod_rate={post_mod_rate:.0%})"
+                    )
+                    new_level = PressureLevel.HIGH
+            elif ban_rate >= 0.10 or warn_rate >= 0.30 or post_mod_rate >= 0.40:
+                # 超过 10% 封号，或 30% 警告，或 40% 帖子被审核 → MEDIUM
+                if new_level == PressureLevel.LOW:
+                    logger.info(
+                        f"[AdaptiveController] Absolute trigger → forced MEDIUM "
+                        f"(ban_rate={ban_rate:.0%}, warn_rate={warn_rate:.0%}, post_mod_rate={post_mod_rate:.0%})"
+                    )
+                    new_level = PressureLevel.MEDIUM
+
             if new_level != self.current_pressure:
                 logger.info(
                     f"[AdaptiveController] Pressure level changed: "
@@ -120,9 +148,9 @@ class AdaptiveController:
                 logger.debug(
                     f"[AdaptiveController] step={self._step_counter} "
                     f"pressure={new_level.value}({pressure_score:.2f}) "
-                    f"moderated_posts={stats.get('moderated_posts', 0)}/{stats.get('total_attacked_posts', 0)} "
-                    f"warned_bots={stats.get('warned_bots', 0)}/{stats.get('total_bot_users', 0)} "
-                    f"banned_bots={stats.get('banned_bots', 0)}/{stats.get('total_bot_users', 0)}"
+                    f"post_moderated={stats.get('post_moderated_bots', 0)}/{stats.get('total_bot_users', 0)} "
+                    f"warned={stats.get('warned_bots', 0)}/{stats.get('total_bot_users', 0)} "
+                    f"banned={stats.get('banned_bots', 0)}/{stats.get('total_bot_users', 0)}"
                 )
 
             self.current_pressure = new_level
@@ -151,83 +179,51 @@ class AdaptiveController:
             }
         """
         stats = {
-            "total_attacked_posts": 0,
-            "moderated_posts": 0,
             "total_bot_users": 0,
-            "warned_bots": 0,
-            "banned_bots": 0,
+            "post_moderated_bots": 0,   # 信号1：所评论的帖子被审核处理的bot数
+            "warned_bots": 0,           # 信号2：comment_violation_count > 0 的bot数
+            "banned_bots": 0,           # 信号3：status='banned' 的bot数
         }
         try:
             cursor = db_conn.cursor()
 
-            # 信号 1（主）：帖子级审核率
-            # 读取 posts.status 和 posts.moderation_action，这两个字段由
-            # moderation/actions/ 下的三个 Action 类直接写入，是审核系统最可靠的痕迹。
-            # 与 moderation_system.md §8 描述完全匹配：
-            #   HARD_TAKEDOWN  → posts.status = 'taken_down'
-            #   WARNING_LABEL  → posts.moderation_action = 'warning_label'
-            #   VISIBILITY_DEG → posts.moderation_action = 'visibility_degradation'
-            cursor.execute(
-                """
-                SELECT
-                    COUNT(DISTINCT ma.target_post_id) AS total_attacked_posts,
-                    COUNT(DISTINCT CASE
-                        WHEN p.status = 'taken_down'
-                          OR p.moderation_action IS NOT NULL
-                        THEN ma.target_post_id
-                    END) AS moderated_posts
-                FROM malicious_attacks ma
-                LEFT JOIN posts p ON ma.target_post_id = p.post_id
-                WHERE ma.id > ?
-                """,
-                (self._last_checked_attack_id,),
-            )
-            row = cursor.fetchone()
-            if row:
-                stats["total_attacked_posts"] = int(row[0] or 0)
-                stats["moderated_posts"] = int(row[1] or 0)
-
-            # 更新水印：记录本次已查过的最大 attack id
-            cursor.execute("SELECT MAX(id) FROM malicious_attacks")
-            max_row = cursor.fetchone()
-            if max_row and max_row[0] is not None:
-                self._last_checked_attack_id = int(max_row[0])
-
-            # 信号 2（早期预警）+ 信号 3（滞后封号）：评论审查信号
-            # 信号 2: users.comment_violation_count > 0 — 由 _check_comment_policy_violation()
-            #   首次拦截评论时写入（无论是否达到封号阈值）。第一次评论被拦截即可感知，
-            #   响应速度比封号信号快 2~3 步。
-            # 信号 3: users.status='banned' — 由 _check_comment_policy_violation()
-            #   在 moderation_enabled=True 且关键词累计 3 次违规时写入。
-            # 注意：两个信号均需 moderation_enabled=True，关闭时由主信号（帖子级）兜底。
-            # 局限：因为被拦截的评论不会写入 comments 表，total_bot_users 仅统计有
-            #   成功写入评论的水军账号，被完全拦截的账号不在统计范围内（可接受）。
+            # 三路信号统一全量查询，分母统一为恶意用户总数（total_bot_users），
+            # 确保三路信号量纲一致、权重加权可比。
+            #
+            # 信号1（帖子被审核）：水军评论所在帖子被 HARD_TAKEDOWN / WARNING_LABEL /
+            #   VISIBILITY_DEGRADATION 处理。通过 comments.post_id → posts 关联取得。
+            # 信号2（评论被拦截）：users.comment_violation_count > 0，首次关键词命中即感知。
+            # 信号3（账号被封禁）：users.status = 'banned'，3 次违规后写入，最强确认信号。
+            #
+            # 全量历史查询（无水印）原因：被封号的账号无法再发评论，若只看增量窗口，
+            # 已封账号将从分母永久消失，导致封号信号随时间归零。
             cursor.execute(
                 """
                 SELECT
                     COUNT(DISTINCT c.author_id) AS total_bot_users,
                     COUNT(DISTINCT CASE
+                        WHEN p.status = 'taken_down'
+                          OR p.moderation_action IS NOT NULL
+                        THEN c.author_id
+                    END) AS post_moderated_bots,
+                    COUNT(DISTINCT CASE
                         WHEN u.comment_violation_count > 0 THEN c.author_id
                     END) AS warned_bots,
-                    COUNT(DISTINCT CASE WHEN u.status='banned' THEN c.author_id END) AS banned_bots
+                    COUNT(DISTINCT CASE
+                        WHEN u.status = 'banned' THEN c.author_id
+                    END) AS banned_bots
                 FROM malicious_comments mc
-                JOIN comments c ON mc.comment_id = c.comment_id
-                JOIN users u ON c.author_id = u.user_id
-                WHERE mc.id > ?
-                """,
-                (self._last_checked_comment_id,),
+                JOIN comments c  ON mc.comment_id = c.comment_id
+                JOIN posts p     ON c.post_id = p.post_id
+                JOIN users u     ON c.author_id = u.user_id
+                """
             )
             row = cursor.fetchone()
             if row:
-                stats["total_bot_users"] = int(row[0] or 0)
-                stats["warned_bots"] = int(row[1] or 0)
-                stats["banned_bots"] = int(row[2] or 0)
-
-            # 更新水印：记录本次已查过的最大 malicious_comment id
-            cursor.execute("SELECT MAX(id) FROM malicious_comments")
-            max_row = cursor.fetchone()
-            if max_row and max_row[0] is not None:
-                self._last_checked_comment_id = int(max_row[0])
+                stats["total_bot_users"]      = int(row[0] or 0)
+                stats["post_moderated_bots"]  = int(row[1] or 0)
+                stats["warned_bots"]          = int(row[2] or 0)
+                stats["banned_bots"]          = int(row[3] or 0)
 
         except Exception as e:
             logger.warning(f"[AdaptiveController] DB query error: {e}")
@@ -238,19 +234,30 @@ class AdaptiveController:
         """
         计算审核压力系数（0.0 ~ 1.0）。
 
-        公式：post_pressure × 0.5 + warn_pressure × 0.3 + ban_pressure × 0.2
+        公式：post_pressure × 0.30 + warn_pressure × 0.25 + ban_pressure × 0.45
+
             post_pressure  = moderated_posts / max(total_attacked_posts, 1)
-                → 主信号：帖子被下架/标记，无论 moderation_enabled 状态均有效
-            warn_pressure  = warned_bots / max(total_bot_users, 1)
-                → 早期预警：comment_violation_count > 0，首次评论被拦截即感知
-                → 比封号快 2~3 步，有助于在损失严重前触发 MEDIUM 压力调整
-            ban_pressure   = banned_bots / max(total_bot_users, 1)
-                → 滞后信号：3 次违规封号，响应最慢但最确定
+                → 帖子被下架/标记；无论 moderation_enabled 状态均有效，但小模拟中
+                  bots 主要攻击 fake news 帖，审核对这类帖命中率低，因此权重降低。
+
+            warn_pressure  = warned_bots / max(total_bot_users, 1)  [全量累计]
+                → comment_violation_count > 0 的账号比例；首次评论被拦截即感知。
+
+            ban_pressure   = banned_bots / max(total_bot_users, 1)  [全量累计]
+                → users.status='banned' 的账号比例；最确定的信号，权重最高。
+                → 使用全量历史统计，已封号账号的压力贡献不会随时间消失。
+
+        额外绝对阈值（独立于公式分值，防止权重平均稀释导致无法触发）：
+            banned_rate >= 0.10  → 至少 MEDIUM（覆盖封号 < 10 但达到比例阈值的场景）
+            banned_rate >= 0.25  → 至少 HIGH
+            warn_rate   >= 0.30  → 至少 MEDIUM
+        这些阈值由 update() 在公式分值基础上叠加判断，不在此方法内处理。
         """
-        post_pressure = stats["moderated_posts"] / max(stats["total_attacked_posts"], 1)
-        warn_pressure = stats["warned_bots"] / max(stats["total_bot_users"], 1)
-        ban_pressure = stats["banned_bots"] / max(stats["total_bot_users"], 1)
-        return post_pressure * 0.5 + warn_pressure * 0.3 + ban_pressure * 0.2
+        total = max(stats["total_bot_users"], 1)
+        post_pressure = stats["post_moderated_bots"] / total
+        warn_pressure = stats["warned_bots"] / total
+        ban_pressure  = stats["banned_bots"] / total
+        return post_pressure * 0.30 + warn_pressure * 0.25 + ban_pressure * 0.45
 
     def get_effective_role_distribution(self, base_dist: Dict[str, float]) -> Dict[str, float]:
         """
@@ -330,16 +337,18 @@ class AdaptiveController:
         """
         if not self.config.enabled or not self.config.reflection_enabled:
             return
-        if self.current_pressure != PressureLevel.HIGH:
+        # MEDIUM 或 HIGH 均可触发反思（不再仅限于 HIGH）
+        if self.current_pressure == PressureLevel.LOW:
             return
-        if self._step_counter % self.config.reflection_interval_steps != 0:
+        # 压力等级越高，反思越频繁：HIGH 每 1 步，MEDIUM 每 2 步
+        interval = 1 if self.current_pressure == PressureLevel.HIGH else 2
+        if self._step_counter % interval != 0:
             return
         if not self.model_selector:
             return
 
         stats = moderation_stats or self._last_moderation_stats
-        moderated_posts = stats.get("moderated_posts", 0)
-        total_attacked = max(stats.get("total_attacked_posts", 1), 1)
+        post_moderated = stats.get("post_moderated_bots", 0)
         warned = stats.get("warned_bots", 0)
         banned = stats.get("banned_bots", 0)
         total_bots = max(stats.get("total_bot_users", 1), 1)
@@ -348,9 +357,8 @@ class AdaptiveController:
 
         prompt = (
             "You are an advisor to a coordinated network that posts skeptical content online.\n"
-            f"The platform's moderation has processed {moderated_posts}/{total_attacked} recently attacked posts "
-            f"(taken down or labeled). "
-            f"Of {total_bots} active bot accounts: {warned} had at least one comment deleted, "
+            f"Of {total_bots} active bot accounts: {post_moderated} had their commented posts taken down or labeled, "
+            f"{warned} had at least one comment deleted, "
             f"and {banned} were fully banned. "
             f"Overall pressure score: {pressure_pct:.0%}.\n"
             f"Total comments posted this round: {total_comments}.\n\n"
@@ -363,9 +371,13 @@ class AdaptiveController:
 
         try:
             def _sync_call():
-                client, _ = self.model_selector.create_langchain_client()
-                response = client.invoke(prompt)
-                return response.content.strip() if hasattr(response, "content") else ""
+                client, model_name = self.model_selector.create_openai_client(role="malicious")
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=300,
+                )
+                return response.choices[0].message.content.strip()
 
             reflection = await asyncio.to_thread(_sync_call)
             if reflection:
