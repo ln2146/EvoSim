@@ -395,7 +395,7 @@ Write your toxic response:"""
         try:
 
             # Obtain the model client (same as a regular user)
-            client, model_name = self.model_selector.create_langchain_client()
+            client, model_name = self.model_selector.create_openai_client(role="malicious")
             logger.info(f"🔄 Persona {persona.name} starting LLM call (model: {model_name}, type: {response_type})")
 
             # Build the psychology-influenced prompt
@@ -411,7 +411,11 @@ Write your toxic response:"""
 
             def call_llm():
                 try:
-                    response = client.invoke(prompt)
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=100
+                    )
                     result[0] = response
                 except Exception as e:
                     error[0] = e
@@ -433,7 +437,7 @@ Write your toxic response:"""
 
             response = result[0]
 
-            content = response.content.strip() if response and hasattr(response, 'content') else ""
+            content = response.choices[0].message.content.strip() if response and response.choices else ""
 
             if content:
                 # Clean up the content quickly
@@ -468,7 +472,7 @@ Write your toxic response:"""
             logger.info(f"🔄 Persona {persona.name} starting LLM call (type: {response_type})")
 
             # Obtain the model client
-            client, model_name = self.model_selector.create_langchain_client()
+            client, model_name = self.model_selector.create_openai_client(role="malicious")
             logger.info(f"🔄 Persona {persona.name} using model: {model_name}")
 
             # Build the psychology-influenced prompt
@@ -477,8 +481,12 @@ Write your toxic response:"""
             logger.info(f"🔄 Persona {persona.name} sending prompt to LLM...")
 
             # Perform the synchronous LLM call
-            response = client.invoke(prompt)
-            content = response.content.strip() if response and hasattr(response, 'content') else ""
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100
+            )
+            content = response.choices[0].message.content.strip() if response and response.choices else ""
 
             if content:
                 logger.info(f"✅ Persona {persona.name} LLM raw response: '{content}'")
@@ -526,7 +534,7 @@ Write your toxic response:"""
         try:
             # Try to acquire the model client with a fast-fail safeguard
             try:
-                client, model_name = self.model_selector.create_langchain_client()
+                client, model_name = self.model_selector.create_openai_client(role="malicious")
             except Exception as e:
                 logger.debug(f"Model selection failed: {e}")
                 return random.choice(fallback_responses)
@@ -540,8 +548,12 @@ Response:"""
 
             # Call synchronously to avoid asyncio.to_thread issues
             try:
-                response = client.invoke(prompt)
-                content = response.content.strip() if response and hasattr(response, 'content') else ""
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=60
+                )
+                content = response.choices[0].message.content.strip() if response and response.choices else ""
 
                 # Quickly clean up the content
                 if content and len(content) > 5:
@@ -565,16 +577,20 @@ Response:"""
         """Generate malicious content"""
         try:
             # Select the model
-            client, model_name = self.model_selector.create_langchain_client()
-            
+            client, model_name = self.model_selector.create_openai_client(role="malicious")
+
             # Build the malicious content generation prompt
             prompt = self._build_malicious_comment_prompt(persona, target_content)
 
             # Generate content with enhanced error handling
             try:
                 # First try without specifying a max_tokens parameter
-                response = client.invoke(prompt)
-                content = response.content.strip()
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=100
+                )
+                content = response.choices[0].message.content.strip() if response and response.choices else ""
             except Exception as e:
                 error_str = str(e)
                 # Check if the error is 405, 400, or another API issue
@@ -615,8 +631,12 @@ Response:"""
                         logger.warning(f"⚠️ Other error encountered; retrying with the default call: {e}")
                         # Attempt to call again
                         try:
-                            response = client.invoke(prompt)
-                            content = response.content.strip()
+                            response = client.chat.completions.create(
+                                model=model_name,
+                                messages=[{"role": "user", "content": prompt}],
+                                max_tokens=100
+                            )
+                            content = response.choices[0].message.content.strip() if response and response.choices else ""
                             if not content or content.isspace():
                                 logger.warning("⚠️ Retry returned empty content; using fallback")
                                 if persona.sample_responses:
@@ -893,24 +913,30 @@ Response:"""
         """Highly diversified LLM call that avoids templating"""
         try:
             # Obtain the model client
-            client, model_name = self.model_selector.create_langchain_client()
+            client, model_name = self.model_selector.create_openai_client(role="malicious")
 
             # Dynamically craft a highly personalized prompt to avoid templating
             prompt = self._build_malicious_comment_prompt(persona, target_content)
 
             # Directly call without any timeout or threading mechanisms
-            # Configure an appropriate max_tokens value to ensure full responses
             try:
-                response = client.invoke(prompt)
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=100
+                )
             except Exception as e:
                 # If the call fails, try again with more conservative parameters
                 if "max_tokens" in str(e).lower():
-                    # Reduce the token limit and retry
-                    response = client.invoke(prompt)
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=60
+                    )
                 else:
                     raise e
 
-            content = response.content.strip() if response and hasattr(response, 'content') else ""
+            content = response.choices[0].message.content.strip() if response and response.choices else ""
 
             if content:
                 # Ensure content completeness; only truncate when it is too long
@@ -960,23 +986,30 @@ Response:"""
         """
         try:
             # Obtain the model client
-            client, model_name = self.model_selector.create_langchain_client()
+            client, model_name = self.model_selector.create_openai_client(role="malicious")
 
             # Dynamically craft the prompt（支持战术角色覆盖）
             prompt = self._build_malicious_comment_prompt(persona, target_content, role_overlay)
 
             # Call the LLM directly with parameters tuned for complete generation
             try:
-                response = client.invoke(prompt)
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=100
+                )
             except Exception as e:
                 # If the call fails, retry with more conservative parameters
                 if "max_tokens" in str(e).lower():
-                    # Reduce the token limit and retry
-                    response = client.invoke(prompt)
+                    response = client.chat.completions.create(
+                        model=model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=60
+                    )
                 else:
                     raise e
 
-            content = response.content.strip() if response and hasattr(response, 'content') else ""
+            content = response.choices[0].message.content.strip() if response and response.choices else ""
 
             if content:
                 # Ensure content completeness; truncate only when excessively long
