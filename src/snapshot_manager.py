@@ -109,7 +109,7 @@ class SnapshotManager:
                 with open(info_file, 'w', encoding='utf-8') as f:
                     json.dump(additional_info, f, ensure_ascii=False, indent=2)
 
-            # 更新元数据
+            # 更新全局元数据
             metadata = self._load_metadata()
             metadata["ticks"][str(tick)] = {
                 "tick": tick,
@@ -118,6 +118,18 @@ class SnapshotManager:
                 "info_file": info_file if additional_info else None
             }
             self._save_metadata(metadata)
+
+            # 同时更新会话目录下的元数据（用于list_sessions读取）
+            session_metadata_path = os.path.join(self.snapshots_dir, self.session_id, "metadata.json")
+            session_metadata = self._load_session_metadata(self.session_id)
+            session_metadata["ticks"][str(tick)] = {
+                "tick": tick,
+                "timestamp": datetime.now().isoformat(),
+                "db_path": snapshot_db_path,
+                "info_file": info_file if additional_info else None
+            }
+            with open(session_metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(session_metadata, f, ensure_ascii=False, indent=2)
 
             logger.info(f"✅ 已保存 tick {tick} 的快照")
             return True

@@ -320,6 +320,120 @@ def select_snapshot_to_restore():
         return None, None
 
 
+def get_user_choice_malicious_bots():
+    """Get user selection for the malicious bot system."""
+    print("\n" + "="*60)
+    print("🔥 Malicious bot system selection")
+    print("="*60)
+    print("The malicious bot system can:")
+    print("  • Simulate real malicious attacks and extreme rhetoric")
+    print("  • Automatically generate diverse opposing viewpoints and criticism")
+    print("  • Test the opinion balance system's defense capability")
+    print("  • Provide a complete attack-defense demonstration")
+    print("  • All malicious comments carry the 🔥[Malicious Bots] tag")
+    print()
+    print("Note: Enabling generates simulated malicious content, for research and testing only")
+    print("="*60)
+
+    while True:
+        choice = input("Enable malicious bot system? (y/n): ").strip().lower()
+
+        if choice in ['y', 'yes', 'enable']:
+            print("✅ Selected to enable the malicious bot system")
+            return True
+        elif choice in ['n', 'no', 'disable']:
+            print("❌ Selected to disable the malicious bot system")
+            return False
+        else:
+            print("❌ Invalid input, please enter y (enable) or n (disable)")
+
+
+def get_user_choice_opinion_balance():
+    """Get user selection for the opinion balance system."""
+    print("\n" + "="*60)
+    print("⚖️  Opinion balance system selection")
+    print("="*60)
+    print("The opinion balance system can:")
+    print("  • Monitor extreme content in real time (conspiracy theories, hate speech, radical incitement, etc.)")
+    print("  • Automatically generate balanced responses to reduce polarization")
+    print("  • Provide detailed intervention effect analysis and stats")
+    print("  • Simulate real social media content governance scenarios")
+    print("  • Support feedback and iteration, dynamically adjusting strategies")
+    print()
+    print("Note: Enabling increases runtime but shows full intervention effects")
+    print("="*60)
+
+    while True:
+        choice = input("Enable opinion balance system? (y=standalone/n=disable) [default: y]: ").strip().lower()
+
+        # If the user presses Enter, default to y
+        if choice == "":
+            choice = "y"
+
+        if choice in ['y', 'yes', 'enable']:
+            print("🚀 Selected to start the opinion balance system in standalone mode")
+            return "standalone"
+        elif choice in ['n', 'no', 'disable']:
+            print("❌ Selected to disable the opinion balance system")
+            return False
+        elif choice in ['standalone', 's']:
+            print("🚀 Selected to start the opinion balance system in standalone mode")
+            return "standalone"
+        else:
+            print("❌ Invalid input, please enter y (standalone) / n (disable)")
+
+
+def get_user_choice_prebunking():
+    """Get user choice for the prebunking system."""
+    print("\n" + "="*60)
+    print("🛡️  Prebunking system (Pre-bunking)")
+    print("="*60)
+    print("Prebunking system features:")
+    print("  • Directly insert safety prompts into regular users' feeds")
+    print("  • Provide background knowledge before users encounter potentially misleading information")
+    print("  • Improve users' immunity to fake news and critical thinking")
+    print("  • Show warning messages for specific topics")
+    print("  • For example: before viewing posts about 'miracle cures', users see prompts to spot health pseudoscience")
+    print("\nImplementation:")
+    print("  - The system inserts safety prompts into regular users' feeds")
+    print("  - These prompts appear before users view related content")
+    print("\nNote: enabling this feature adds warning prompts to user feeds")
+    print("="*60)
+
+    while True:
+        choice = input("Enable prebunking system? (y/n): ").strip().lower()
+        if choice in ['y', 'yes', 'enable']:
+            print("✅ Selected to enable the prebunking system")
+            print("   - Will insert safety prompts into regular users' feeds")
+            return True
+        elif choice in ['n', 'no', 'disable']:
+            print("❌ Selected to disable the prebunking system")
+            return False
+        else:
+            print("❌ Invalid input, please enter y (enable) or n (disable)")
+
+
+def get_required_feedback_monitoring_interval(config: dict) -> int:
+    """Read feedback monitoring interval from config without fallback."""
+    obs_config = config.get('opinion_balance_system')
+    if not isinstance(obs_config, dict):
+        raise ValueError("Missing 'opinion_balance_system' section in configs/experiment_config.json")
+
+    value = obs_config.get('feedback_monitoring_interval')
+    if isinstance(value, str):
+        value = value.strip()
+        if value.isdigit():
+            value = int(value)
+
+    if isinstance(value, (int, float)) and int(value) > 0:
+        return int(value)
+
+    raise ValueError(
+        "opinion_balance_system.feedback_monitoring_interval must be a positive integer "
+        f"in configs/experiment_config.json, got: {obs_config.get('feedback_monitoring_interval')!r}"
+    )
+
+
 def get_user_choice_fact_checking():
     """Get user choice for the fact-checking system."""
     print("\n" + "=" * 60)
@@ -431,17 +545,31 @@ if __name__ == "__main__":
         from snapshot_manager import create_snapshot_manager
 
         project_root = os.path.dirname(os.path.dirname(__file__))
-        db_path = os.path.join(project_root, 'database', 'simulation.db')
-        snapshot_manager = create_snapshot_manager(project_root, db_path)
+
+        # ⚠️ 重要：comparison.py 使用独立的数据库文件，避免与 main.py 冲突
+        # main.py 使用: database/simulation.db
+        # comparison.py 使用: database/simulation_comparison.db
+        main_db_path = os.path.join(project_root, 'database', 'simulation.db')
+        comparison_db_path = os.path.join(project_root, 'database', 'simulation_comparison.db')
+
+        snapshot_manager = create_snapshot_manager(project_root, main_db_path)
 
         print(f"\n🔄 正在从 tick {tick_to_restore} 恢复数据库...")
+        # 先恢复到主数据库路径
         restored_db = snapshot_manager.restore_from_tick(tick_to_restore, session_id)
 
         if not restored_db:
             print("❌ 恢复失败，退出程序")
             sys.exit(1)
 
+        # 将恢复的数据库复制到 comparison.py 专用数据库
+        print(f"📋 复制恢复的数据库到 comparison.py 专用数据库...")
+        import shutil
+        shutil.copy2(main_db_path, comparison_db_path)
+
         print(f"✅ 成功从 tick {tick_to_restore} 恢复数据库状态")
+        print(f"📁 Comparison 数据库: {comparison_db_path}")
+        print(f"💡 这样可以与 main.py 同时运行而不冲突！")
 
     except Exception as e:
         print(f"❌ 恢复快照时出错: {e}")
@@ -452,6 +580,11 @@ if __name__ == "__main__":
     with open(config_path, 'r') as file:
         config = json.load(file)
 
+    # ⚠️ 重要：设置 comparison.py 专用数据库路径
+    # 这样 comparison.py 和 main.py 可以同时运行而不冲突
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    config['db_path'] = os.path.join(project_root, 'database', 'simulation_comparison.db')
+
     apply_selector_engine(config)
 
     # 显示恢复的tick信息
@@ -459,22 +592,78 @@ if __name__ == "__main__":
     print(f"📊 从 tick {tick_to_restore} 继续模拟")
     print("=" * 60)
 
-    # 获取用户选择 - 事实核查系统
+    # Get user selection - choose malicious bot system first
+    enable_malicious_bots = get_user_choice_malicious_bots()
+
+    # CLI 选择直接写入全局恶意攻击开关，成为单一真值来源
+    control_flags.attack_enabled = enable_malicious_bots
+
+    # Then choose the opinion balance system
+    opinion_balance_choice = get_user_choice_opinion_balance()
+
+    # Handle opinion balance system selection
+    if opinion_balance_choice == "standalone":
+        # Disable the opinion balance system so simulation.py knows this is standalone mode
+        enable_opinion_balance = False
+        enable_feedback_system = True  # Enable feedback iteration by default in standalone mode
+        # Read monitoring interval from config
+        monitoring_interval = get_required_feedback_monitoring_interval(config)
+
+        # Set standalone mode flag
+        if 'opinion_balance_system' not in config:
+            config['opinion_balance_system'] = {}
+        config['opinion_balance_system']['standalone_mode'] = True
+
+        print("✅ Using the standalone opinion balance system; main program feature is disabled")
+    else:
+        # Disable the opinion balance system
+        enable_opinion_balance = False
+        enable_feedback_system = True  # Enable feedback iteration by default
+        # Read monitoring interval from config
+        monitoring_interval = get_required_feedback_monitoring_interval(config)
+        print("❌ Opinion balance system disabled")
+
+    # Select fact-checking system
     fact_check_type = get_user_choice_fact_checking()
     fact_check_settings = get_fact_checking_settings(fact_check_type)
 
-    # CLI选择直接写入全局事实核查开关，成为单一真值来源
+    # CLI 选择直接写入全局事实核查开关，成为单一真值来源
     # 与恶意攻击开关类似的控制逻辑
     if fact_check_type == "third_party_fact_checking":
         control_flags.aftercare_enabled = True
     else:
         control_flags.aftercare_enabled = False
 
-    # 内容审核：从配置文件读取，不通过CLI提示
-    # 可通过 /control/moderation API 在运行时切换
+    # Content moderation: no CLI prompt — read from config file.
+    # Can be toggled at runtime via /control/moderation API.
     control_flags.moderation_enabled = config.get('moderation', {}).get('content_moderation', False)
 
-    # 根据CLI选择更新配置 - CLI优先
+    # Get user choice for the prebunking system
+    enable_prebunking = get_user_choice_prebunking()
+
+    # Update config based on CLI selections - CLI takes precedence
+    if 'malicious_bot_system' not in config:
+        config['malicious_bot_system'] = {}
+
+    # 保留 enabled 字段供日志/其他组件参考，但实际是否攻击
+    # 已完全由 control_flags.attack_enabled 控制。
+    config['malicious_bot_system']['enabled'] = enable_malicious_bots
+    # Keep cluster_size from the config without forcing an override
+    if enable_malicious_bots:
+        # Only use defaults if the config does not specify them
+        if 'attack_probability' not in config['malicious_bot_system']:
+            config['malicious_bot_system']['attack_probability'] = 1.0
+        if 'target_post_types' not in config['malicious_bot_system']:
+            config['malicious_bot_system']['target_post_types'] = ['user_post']
+
+    if 'opinion_balance_system' not in config:
+        config['opinion_balance_system'] = {}
+
+    config['opinion_balance_system']['enabled'] = enable_opinion_balance
+    config['opinion_balance_system']['monitoring_enabled'] = enable_opinion_balance  # Monitoring is tied to opinion balance, not feedback
+    config['opinion_balance_system']['feedback_system_enabled'] = enable_feedback_system
+    config['opinion_balance_system']['feedback_monitoring_interval'] = monitoring_interval
+
     # 更新事实核查配置
     # 保留 experiment type 和 settings 供日志/其他组件参考，
     # 但实际是否执行事实核查已完全由 control_flags.aftercare_enabled 控制
@@ -485,15 +674,23 @@ if __name__ == "__main__":
     # 完全替换设置（避免上次运行的陈旧键）
     config['experiment']['settings'] = fact_check_settings
 
+    # 更新prebunking配置
+    if 'prebunking_system' not in config:
+        config['prebunking_system'] = {}
+    config['prebunking_system']['enabled'] = enable_prebunking
+
     # 禁用快照功能（comparison模式不需要再保存快照）
     config['snapshot_enabled'] = False
 
     print("\n" + "=" * 60)
     print("⚙️  配置已更新")
     print("=" * 60)
+    print(f"• 恶意攻击: {'启用' if control_flags.attack_enabled else '禁用'}")
     print(f"• 事实核查: {'启用' if control_flags.aftercare_enabled else '禁用'}")
     print(f"• 内容审核: {'启用' if control_flags.moderation_enabled else '禁用'}")
+    print(f"• 预先免疫: {'启用' if enable_prebunking else '禁用'}")
     print(f"• 起始tick: {tick_to_restore}")
+    print(f"• 数据库: simulation_comparison.db (独立数据库，可与main.py同时运行)")
     print("=" * 60)
 
     # 创建模拟实例（注意：这里reset_db=False，因为我们已经恢复了快照）

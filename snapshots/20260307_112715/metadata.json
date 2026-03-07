@@ -1,0 +1,12 @@
+{
+  "session_id": "20260307_112715",
+  "created_at": "2026-03-07T11:27:15.448950",
+  "ticks": {
+    "1": {
+      "tick": 1,
+      "timestamp": "2026-03-07T11:28:43.907728",
+      "db_path": "E:\\EVOCROPS\\new_Evocorps\\snapshots\\20260307_112715\\tick_1\\simulation.db",
+      "info_file": "E:\\EVOCROPS\\new_Evocorps\\snapshots\\20260307_112715\\tick_1\\info.json"
+    }
+  }
+}
