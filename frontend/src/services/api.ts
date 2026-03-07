@@ -715,9 +715,12 @@ export const deleteSnapshot = async (sessionId: string): Promise<{ success: bool
   try {
     const response = await api.delete(`/snapshots/${sessionId}`)
     return response.data
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Failed to delete snapshot:', error)
-    return { success: false, message: '删除失败' }
+    // 尝试从错误响应中提取后端返回的消息
+    const axiosError = error as { response?: { data?: { message?: string } } }
+    const message = axiosError.response?.data?.message || '删除失败'
+    return { success: false, message }
   }
 }
 
@@ -726,8 +729,10 @@ export const deleteAllSnapshots = async (): Promise<{ success: boolean; message:
   try {
     const response = await api.delete('/snapshots/all')
     return response.data
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Failed to delete all snapshots:', error)
-    return { success: false, message: '删除失败', deleted_count: 0 }
+    const axiosError = error as { response?: { data?: { message?: string } } }
+    const message = axiosError.response?.data?.message || '删除失败'
+    return { success: false, message, deleted_count: 0 }
   }
 }
