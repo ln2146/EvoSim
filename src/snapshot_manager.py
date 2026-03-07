@@ -100,6 +100,17 @@ class SnapshotManager:
                 logger.error(f"❌ 源数据库不存在: {self.simulation_db_path}")
                 return False
 
+            # 执行 WAL checkpoint，确保所有数据写入主数据库文件
+            try:
+                import sqlite3
+                conn = sqlite3.connect(self.simulation_db_path)
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                conn.close()
+                logger.debug(f"✅ 已执行 WAL checkpoint")
+            except Exception as checkpoint_err:
+                logger.warning(f"WAL checkpoint 失败（继续复制）: {checkpoint_err}")
+
             # 复制数据库
             shutil.copy2(self.simulation_db_path, snapshot_db_path)
 
