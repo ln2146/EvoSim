@@ -774,6 +774,7 @@ if __name__ == "__main__":
     # 读取环境变量（用于从快照恢复）
     start_tick_env = os.environ.get('START_TICK', '')
     reset_db_env = os.environ.get('RESET_DB', 'true')
+    parent_session_id = os.environ.get('PARENT_SESSION_ID', '')
 
     start_tick = int(start_tick_env) if start_tick_env.isdigit() else 1
     reset_db = reset_db_env.lower() != 'false'
@@ -781,6 +782,8 @@ if __name__ == "__main__":
     if start_tick > 1:
         print(f"📌 从快照恢复: 起始 tick = {start_tick}")
         print(f"📌 数据库重置: {'是' if reset_db else '否'}")
+        if parent_session_id:
+            print(f"📌 父快照会话: {parent_session_id}")
 
     # Start the FastAPI control server in the background so that
     # external tools / frontend can toggle runtime flags while the
@@ -1166,7 +1169,12 @@ if __name__ == "__main__":
     else:
         print("\n🎬 Starting simulation...")
     import asyncio
-    asyncio.run(sim.run(config['num_time_steps'], start_tick=start_tick))
+    asyncio.run(sim.run(
+        config['num_time_steps'],
+        start_tick=start_tick,
+        parent_session_id=parent_session_id or None,
+        parent_tick=start_tick if parent_session_id else None
+    ))
 
     # Show final results
     print("\n✅ Simulation completed!")

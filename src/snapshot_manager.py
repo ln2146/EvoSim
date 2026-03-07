@@ -43,9 +43,13 @@ class SnapshotManager:
         # 当前会话ID
         self.session_id = None
 
-    def create_session(self) -> str:
+    def create_session(self, parent_session_id: Optional[str] = None, parent_tick: Optional[int] = None) -> str:
         """
         创建新的快照会话
+
+        Args:
+            parent_session_id: 父快照会话ID（从哪个快照恢复的）
+            parent_tick: 父快照的起始tick
 
         Returns:
             session_id: 会话ID
@@ -64,12 +68,17 @@ class SnapshotManager:
         metadata = {
             "session_id": self.session_id,
             "created_at": datetime.now().isoformat(),
-            "ticks": {}
+            "ticks": {},
+            "parent_session_id": parent_session_id,
+            "parent_tick": parent_tick
         }
 
         self._save_metadata(metadata)
 
-        logger.info(f"📦 创建新快照会话: {self.session_id}")
+        if parent_session_id:
+            logger.info(f"📦 创建新快照会话: {self.session_id} (继承自 {parent_session_id} tick {parent_tick})")
+        else:
+            logger.info(f"📦 创建新快照会话: {self.session_id}")
         return self.session_id
 
     def save_tick_snapshot(self, tick: int, additional_info: Optional[Dict[str, Any]] = None) -> bool:
@@ -455,11 +464,24 @@ class SnapshotManager:
         包括：
         1. 已命名的快照（有 name 字段）
         2. 未命名但有 tick 数据的会话
+        3. 继承关系：如果会话有父快照，合并显示父快照的 tick
 
         Returns:
             已保存快照列表，包含详细预览信息
         """
         try:
+            # 先加载所有会话的元数据，用于处理继承关系
+            all_metadata = {}
+            if os.path.exists(self.snapshots_dir):
+                for session_id in os.listdir(self.snapshots_dir):
+                    session_dir = os.path.join(self.snapshots_dir, session_id)
+                    if not os.path.isdir(session_dir):
+                        continue
+                    metadata_path = os.path.join(session_dir, "metadata.json")
+                    if os.path.exists(metadata_path):
+                        with open(metadata_path, 'r', encoding='utf-8') as f:
+                            all_metadata[session_id] = json.load(f)
+
             snapshots = []
             if not os.path.exists(self.snapshots_dir):
                 return snapshots
@@ -469,17 +491,48 @@ class SnapshotManager:
                 if not os.path.isdir(session_dir):
                     continue
 
-                # 尝试读取会话级 metadata.json
-                metadata_path = os.path.join(session_dir, "metadata.json")
-                metadata = {}
-
-                if os.path.exists(metadata_path):
-                    with open(metadata_path, 'r', encoding='utf-8') as f:
-                        metadata = json.load(f)
+                metadata = all_metadata.get(session_id, {})
 
                 # 构建 ticks 列表（用于详细预览）
                 ticks = []
                 ticks_data = metadata.get("ticks", {})
+
+                # 检查是否有父快照
+                parent_session_id = metadata.get("parent_session_id")
+                parent_tick = metadata.get("parent_tick")
+
+                # 如果有父快照，加载父快照的 tick 数据
+                inherited_ticks = []
+                if parent_session_id and parent_tick:
+                    parent_metadata = all_metadata.get(parent_session_id, {})
+                    parent_ticks_data = parent_metadata.get("ticks", {})
+
+                    # 加载父快照中 parent_tick 及之前的 tick（包含 parent_tick 本身）
+                    for tick_str, tick_info in sorted(parent_ticks_data.items(), key=lambda x: int(x[0])):
+                        tick_num = int(tick_str)
+                        if tick_num <= parent_tick:
+                            user_count = tick_info.get("user_count", 0)
+                            post_count = tick_info.get("post_count", 0)
+
+                            if user_count == 0 or post_count == 0:
+                                info_file = tick_info.get("info_file", "")
+                                if info_file and os.path.exists(info_file):
+                                    try:
+                                        with open(info_file, 'r', encoding='utf-8') as f:
+                                            info_data = json.load(f)
+                                        user_count = info_data.get("user_count", user_count)
+                                        post_count = info_data.get("post_count", post_count)
+                                    except:
+                                        pass
+
+                            inherited_ticks.append({
+                                "tick": tick_num,
+                                "timestamp": tick_info.get("timestamp", ""),
+                                "user_count": user_count,
+                                "post_count": post_count,
+                                "inherited": True,
+                                "source_session": parent_session_id
+                            })
 
                 # 如果 metadata 中没有 ticks 数据，从目录结构读取
                 if not ticks_data:
@@ -489,13 +542,18 @@ class SnapshotManager:
                                 tick_num = int(item.replace("tick_", ""))
                                 tick_dir = os.path.join(session_dir, item)
                                 info_path = os.path.join(tick_dir, "info.json")
-                                tick_info = {"tick": tick_num, "timestamp": "", "user_count": 0, "post_count": 0}
+                                tick_info = {"tick": tick_num, "timestamp": "", "user_count": 0, "post_count": 0, "inherited": False}
                                 if os.path.exists(info_path):
                                     with open(info_path, 'r', encoding='utf-8') as f:
                                         info_data = json.load(f)
                                     tick_info["timestamp"] = info_data.get("timestamp", "")
                                     tick_info["user_count"] = info_data.get("user_count", 0)
                                     tick_info["post_count"] = info_data.get("post_count", 0)
+                                    # 添加详细用户统计
+                                    tick_info["normal_users"] = info_data.get("normal_users", 0)
+                                    tick_info["malicious_users"] = info_data.get("malicious_users", 0)
+                                    tick_info["leader_users"] = info_data.get("leader_users", 0)
+                                    tick_info["amplifier_users"] = info_data.get("amplifier_users", 0)
                                 ticks.append(tick_info)
                             except:
                                 pass
@@ -521,14 +579,20 @@ class SnapshotManager:
                             "tick": tick_num,
                             "timestamp": tick_info.get("timestamp", ""),
                             "user_count": user_count,
-                            "post_count": post_count
+                            "post_count": post_count,
+                            "inherited": False
                         })
 
+                # 合并继承的 tick 和当前会话的 tick（当前会话优先）
+                current_tick_nums = {t["tick"] for t in ticks}
+                merged_inherited = [t for t in inherited_ticks if t["tick"] not in current_tick_nums]
+                all_ticks = merged_inherited + ticks
+
                 # 按 tick 号排序
-                ticks.sort(key=lambda x: x["tick"])
+                all_ticks.sort(key=lambda x: x["tick"])
 
                 # 跳过没有任何 tick 数据的会话
-                if not ticks:
+                if not all_ticks:
                     continue
 
                 # 使用命名快照的名称，或者使用会话 ID 作为默认名称
@@ -547,12 +611,14 @@ class SnapshotManager:
                     "description": metadata.get("description", ""),
                     "created_at": metadata.get("created_at", ""),
                     "saved_at": metadata.get("saved_at", ""),
-                    "tick_count": len(ticks),
+                    "tick_count": len(all_ticks),
                     "total_users": metadata.get("total_users", 0),
                     "total_posts": metadata.get("total_posts", 0),
                     "total_comments": metadata.get("total_comments", 0),
-                    "ticks": ticks,
-                    "is_named": bool(metadata.get("name"))  # 标记是否为命名快照
+                    "ticks": all_ticks,
+                    "is_named": bool(metadata.get("name")),  # 标记是否为命名快照
+                    "parent_session_id": parent_session_id,
+                    "parent_tick": parent_tick
                 }
                 snapshots.append(snapshot_info)
 

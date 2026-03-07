@@ -216,18 +216,23 @@ class Simulation:
             f"in configs/experiment_config.json, got: {opinion_balance_config.get('feedback_monitoring_interval')!r}"
         )
     
-    async def run(self, num_time_steps: int, start_tick: int = 1):
+    async def run(self, num_time_steps: int, start_tick: int = 1, parent_session_id: str = None, parent_tick: int = None):
         """Run the simulation.
 
         Args:
             num_time_steps: 总时间步数
             start_tick: 起始时间步（从快照恢复时使用）
+            parent_session_id: 父快照会话ID（从哪个快照恢复的）
+            parent_tick: 父快照的起始tick
         """
         # 创建快照会话（如果启用）
         if self.snapshot_enabled:
             try:
-                self.snapshot_manager.create_session()
-                logging.info("✅ 快照系统已启动，将在每个时间步结束后自动保存")
+                self.snapshot_manager.create_session(parent_session_id, parent_tick)
+                if parent_session_id:
+                    logging.info(f"✅ 快照系统已启动（继承自 {parent_session_id} tick {parent_tick}），将在每个时间步结束后自动保存")
+                else:
+                    logging.info("✅ 快照系统已启动，将在每个时间步结束后自动保存")
             except Exception as e:
                 logging.warning(f"快照会话创建失败: {e}")
                 self.snapshot_enabled = False
@@ -524,11 +529,45 @@ class Simulation:
             # 保存tick快照（在tick结束时）
             if self.snapshot_enabled:
                 try:
+                    # 获取详细用户统计
+                    cursor = self.conn.cursor()
+                    # 总用户数
+                    cursor.execute("SELECT COUNT(*) FROM users WHERE status IS NULL OR status != 'banned'")
+                    total_users = cursor.fetchone()[0]
+
+                    # 领袖用户数 (is_influencer)
+                    cursor.execute("SELECT COUNT(*) FROM users WHERE is_influencer = 1 AND (status IS NULL OR status != 'banned')")
+                    leader_users = cursor.fetchone()[0]
+
+                    # 恶意用户数（通过恶意评论关联）
+                    cursor.execute("""
+                        SELECT COUNT(DISTINCT c.author_id)
+                        FROM comments c
+                        JOIN malicious_comments mc ON c.comment_id = mc.comment_id
+                    """)
+                    malicious_users = cursor.fetchone()[0]
+
+                    # 附和群组用户（amplifiers）- 通过攻击记录中的参与用户
+                    cursor.execute("""
+                        SELECT COUNT(DISTINCT c.author_id)
+                        FROM comments c
+                        JOIN malicious_attacks ma ON c.post_id = ma.target_post_id
+                        WHERE ma.cluster_size > 1
+                    """)
+                    amplifier_users = cursor.fetchone()[0]
+
+                    # 普通用户 = 总用户 - 领袖 - 恶意
+                    normal_users = total_users - leader_users - malicious_users
+
                     additional_info = {
                         "tick": step + 1,
                         "timestamp": datetime.now().isoformat(),
-                        "user_count": len(self.users),
-                        "post_count": current_post_count
+                        "user_count": total_users,
+                        "post_count": current_post_count,
+                        "normal_users": normal_users,
+                        "leader_users": leader_users,
+                        "malicious_users": malicious_users,
+                        "amplifier_users": amplifier_users
                     }
                     self.snapshot_manager.save_tick_snapshot(step + 1, additional_info)
                 except Exception as e:
