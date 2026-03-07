@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ElementType, type ReactNode } from 'react'
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { Activity, Play, Square, Shield, Bug, Sparkles, Flame, MessageSquare, ArrowLeft, ThumbsUp, Share2, MessageCircle, BarChart3, Eye, RefreshCw, Users, Database } from 'lucide-react'
+import { Activity, Play, Square, Shield, Bug, Sparkles, Flame, MessageSquare, ArrowLeft, ThumbsUp, Share2, MessageCircle, BarChart3, Eye, RefreshCw, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { createInitialFlowState, routeLogLine, stripLogPrefix, parseLogTimestampMs, type FlowState, type Role } from '../lib/interventionFlow/logRouter'
@@ -978,7 +978,6 @@ export default function DynamicDemo() {
             }
           }
         }}
-        onManageSnapshots={() => setShowSnapshotManage(true)}
       />
 
       <div className={getDynamicDemoGridClassName()}>
@@ -1142,6 +1141,7 @@ export default function DynamicDemo() {
           await handleStartDemo()
         }}
         onCancel={() => setShowSnapshotSelect(false)}
+        onManageSnapshots={() => setShowSnapshotManage(true)}
       />
 
       <SnapshotManageDialog
@@ -1184,7 +1184,6 @@ function DynamicDemoHeader({
   onToggleAftercare,
   onToggleEvoCorps,
   onToggleModeration,
-  onManageSnapshots,
 }: {
   isRunning: boolean
   isStarting?: boolean
@@ -1204,7 +1203,6 @@ function DynamicDemoHeader({
   onToggleAftercare: () => void | Promise<void>
   onToggleEvoCorps: () => void | Promise<void>
   onToggleModeration: () => void | Promise<void>
-  onManageSnapshots?: () => void
 }) {
   return (
     <div className="glass-card p-6 flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
@@ -1274,16 +1272,6 @@ function DynamicDemoHeader({
             <BarChart3 size={18} />
             <span className="text-base font-semibold">静态分析</span>
           </button>
-          {onManageSnapshots && (
-            <button
-              className="btn-secondary h-[59px] w-[140px] flex flex-row items-center justify-center gap-2 px-4"
-              onClick={onManageSnapshots}
-              title="管理快照"
-            >
-              <Database size={18} />
-              <span className="text-base font-semibold">管理快照</span>
-            </button>
-          )}
           <button
             className="btn-secondary h-[59px] w-[140px] flex flex-row items-center justify-center gap-2 px-4"
             onClick={() => onBack('/')}

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { Play, RotateCcw, Clock, Users, FileText, ChevronRight } from 'lucide-react'
+import { Play, RotateCcw, Clock, Users, FileText, ChevronRight, Settings } from 'lucide-react'
 import { getSavedSnapshots, type SavedSnapshot } from '../services/api'
 
 interface SnapshotSelectDialogProps {
@@ -8,9 +8,10 @@ interface SnapshotSelectDialogProps {
   onSelect: (snapshotId: string, startTick: number) => Promise<void>
   onStartFresh: () => Promise<void>
   onCancel: () => void
+  onManageSnapshots?: () => void
 }
 
-export default function SnapshotSelectDialog({ open, onSelect, onStartFresh, onCancel }: SnapshotSelectDialogProps) {
+export default function SnapshotSelectDialog({ open, onSelect, onStartFresh, onCancel, onManageSnapshots }: SnapshotSelectDialogProps) {
   const [snapshots, setSnapshots] = useState<SavedSnapshot[]>([])
   const [selectedSnapshot, setSelectedSnapshot] = useState<SavedSnapshot | null>(null)
   const [selectedTick, setSelectedTick] = useState(1)
@@ -212,32 +213,48 @@ export default function SnapshotSelectDialog({ open, onSelect, onStartFresh, onC
         )}
 
         {/* 底部按钮 */}
-        <div className="flex gap-3 justify-end p-6 border-t border-slate-200">
-          <button
-            onClick={handleStartFresh}
-            disabled={starting}
-            className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors disabled:opacity-50 flex items-center gap-2"
-          >
-            <Play size={16} />
-            重新开始
-          </button>
-          <button
-            onClick={handleSelect}
-            disabled={!selectedSnapshot || starting}
-            className="px-6 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-purple-500 text-white font-medium hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            {starting ? (
-              <>
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                启动中...
-              </>
-            ) : (
-              <>
-                <RotateCcw size={16} />
-                从 Tick {selectedTick} 继续
-              </>
+        <div className="flex gap-3 justify-between p-6 border-t border-slate-200">
+          <div>
+            {onManageSnapshots && (
+              <button
+                onClick={() => {
+                  onCancel()
+                  onManageSnapshots()
+                }}
+                className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-2"
+              >
+                <Settings size={16} />
+                管理快照
+              </button>
             )}
-          </button>
+          </div>
+          <div className="flex gap-3">
+            <button
+              onClick={handleStartFresh}
+              disabled={starting}
+              className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              <Play size={16} />
+              重新开始
+            </button>
+            <button
+              onClick={handleSelect}
+              disabled={!selectedSnapshot || starting}
+              className="px-6 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-purple-500 text-white font-medium hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              {starting ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  启动中...
+                </>
+              ) : (
+                <>
+                  <RotateCcw size={16} />
+                  从 Tick {selectedTick} 继续
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>,
