@@ -33,6 +33,10 @@ export default function ExperimentSettings() {
   const [condaEnv, setCondaEnv] = useState<string>('')
   const [isEnvSaved, setIsEnvSaved] = useState<boolean>(false)
 
+  // 演示启停状态
+  const [isStarting, setIsStarting] = useState(false)
+  const [isStopping, setIsStopping] = useState(false)
+
   // 控制开关状态
   const [enableAttack, setEnableAttack] = useState(false)
   const [attackMode, setAttackModeState] = useState<AttackMode | null>(null)
@@ -210,6 +214,84 @@ export default function ExperimentSettings() {
   }
 
   const platformRunning = status.platform === 'running'
+  const dbRunning = status.database === 'running'
+  const isRunning = dbRunning && platformRunning
+
+  const handleStartDemo = async () => {
+    if (isRunning || isStarting) return
+    setIsStarting(true)
+    try {
+      // 启动前将内容审核开关写入配置文件
+      await fetch('/api/config/moderation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content_moderation: enableModeration }),
+      }).catch(() => {})
+
+      const response = await fetch('/api/dynamic/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enable_attack: enableAttack,
+          enable_aftercare: enableAftercare,
+        }),
+      })
+      const data = await response.json()
+
+      if (data.success) {
+        // 延迟同步预置标志到后端
+        const preAttack = enableAttack
+        const preAttackMode = attackMode
+        const preAftercare = enableAftercare
+        const preMod = enableModeration
+        const preEvo = enableEvoCorps
+
+        setTimeout(async () => {
+          const syncs: Array<Promise<unknown>> = []
+          if (preAttack) {
+            if (preAttackMode) syncs.push(setAttackMode(preAttackMode).catch(() => {}))
+            syncs.push(setAttackFlag(true).catch(() => {}))
+          }
+          if (!preAftercare) syncs.push(setAftercareFlag(false).catch(() => {}))
+          if (preMod) syncs.push(setModerationFlag(true).catch(() => {}))
+          await Promise.allSettled(syncs)
+          if (preEvo) {
+            await fetch('/api/dynamic/opinion-balance/start', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            }).catch(() => {})
+          }
+        }, 3000)
+      } else {
+        alert(`启动失败：${data.message || '未知错误'}`)
+      }
+    } catch (error) {
+      alert(`启动失败：${error instanceof Error ? error.message : '网络错误'}`)
+    } finally {
+      setIsStarting(false)
+    }
+  }
+
+  const handleStopDemo = async () => {
+    if (isStopping) return
+    if (!confirm('是否确认关闭模拟？')) return
+    setIsStopping(true)
+    try {
+      const response = await axios.post('/api/dynamic/stop', {}, { timeout: 10000, validateStatus: () => true })
+      if (!response.data.success) {
+        alert(`停止失败：${response.data.message || '未知错误'}`)
+      }
+    } catch (error: any) {
+      const msg = error.message || '网络错误'
+      if (msg.includes('Network Error') || msg.includes('ECONNREFUSED')) {
+        alert('后端服务未响应，已重置前端状态')
+      } else {
+        alert(`停止失败：${msg}`)
+      }
+    } finally {
+      setIsStopping(false)
+    }
+  }
 
   const handleToggleAttack = async () => {
     const action = resolveAttackToggleAction({
@@ -522,6 +604,28 @@ export default function ExperimentSettings() {
               <p className="text-xs text-slate-500">
                 💡 提示: 环境名称区分大小写。可以运行<code className="bg-slate-200 px-1 rounded">conda info --envs</code> 查看所有环境。
               </p>
+            </div>
+          </div>
+
+          {/* 开启/停止演示 */}
+          <div className="glass-card p-6">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={handleStartDemo}
+                disabled={isRunning || isStarting || isStopping}
+                className="btn-primary inline-flex items-center justify-center gap-2 text-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex-1"
+              >
+                <Play size={18} />
+                {isStarting ? '启动中...' : isRunning ? '运行中' : '开启演示'}
+              </button>
+              <button
+                onClick={handleStopDemo}
+                disabled={isStopping}
+                className="btn-secondary inline-flex items-center justify-center gap-2 bg-gradient-to-r from-red-500 to-rose-500 text-white border-transparent hover:shadow-xl text-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex-1"
+              >
+                <Square size={18} />
+                {isStopping ? '停止中...' : '停止演示'}
+              </button>
             </div>
           </div>
 
