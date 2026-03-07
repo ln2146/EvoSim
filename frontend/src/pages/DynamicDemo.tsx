@@ -26,7 +26,8 @@ import { useLeaderboard } from '../hooks/useLeaderboard'
 import { usePostDetail } from '../hooks/usePostDetail'
 import { usePostComments } from '../hooks/usePostComments'
 import { usePostAnalysis } from '../hooks/usePostAnalysis'
-import { setAttackMode, setModerationFlag } from '../services/api'
+import { setAttackMode, setModerationFlag, setAttackFlag, setAftercareFlag } from '../services/api'
+import PostFactionsCard from '../components/PostFactionsCard'
 import { getAttackModeLabel, resolveAttackToggleAction, type AttackMode } from '../lib/attackModeToggle'
 
 const DEMO_BACKEND_LOG_LINES: string[] = [
@@ -616,29 +617,15 @@ export default function DynamicDemo() {
                 const syncs: Array<Promise<unknown>> = []
                 if (preAttack) {
                   if (preAttackMode) {
-                    await fetch('http://localhost:8000/control/attack-mode', {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ mode: preAttackMode }),
-                    }).catch(() => {})
+                    syncs.push(setAttackMode(preAttackMode).catch(() => {}))
                   }
-                  syncs.push(
-                    fetch('http://localhost:8000/control/attack', {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ enabled: true }),
-                    }).catch(() => {})
-                  )
+                  syncs.push(setAttackFlag(true).catch(() => {}))
                 }
                 if (!preAftercare) {
-                  syncs.push(fetch('http://localhost:8000/control/aftercare', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: false }),
-                  }).catch(() => {}))
+                  syncs.push(setAftercareFlag(false).catch(() => {}))
                 }
                 if (preModeration) {
-                  syncs.push(fetch('http://localhost:8000/control/moderation', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: true }),
-                  }).catch(() => {}))
+                  syncs.push(setModerationFlag(true).catch(() => {}))
                 }
                 await Promise.allSettled(syncs)
                 if (preEvoCorps) {
@@ -745,13 +732,8 @@ export default function DynamicDemo() {
             setIsTogglingAttack(true)
             try {
               await setAttackMode(mode)
-              const response = await fetch('http://localhost:8000/control/attack', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled: true }),
-              })
-              const data = await response.json()
-              if (response.ok && data.attack_enabled !== undefined) {
+              const data = await setAttackFlag(true)
+              if (data.attack_enabled !== undefined) {
                 setEnableAttack(Boolean(data.attack_enabled))
                 alert(`✅ Malicious attack enabled (${getAttackModeLabel(mode)})`)
               } else {
@@ -804,15 +786,7 @@ export default function DynamicDemo() {
           setIsTogglingAttack(true)
 
           try {
-            const response = await fetch('http://localhost:8000/control/attack', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ enabled: newEnabled }),
-            })
-
-            const data = await response.json()
+            const data = await setAttackFlag(newEnabled)
 
             if (response.ok && data.attack_enabled !== undefined) {
               // 以服务器返回值为准
@@ -865,17 +839,9 @@ export default function DynamicDemo() {
           setIsTogglingAftercare(true)
 
           try {
-            const response = await fetch('http://localhost:8000/control/aftercare', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ enabled: newEnabled }),
-            })
+            const data = await setAftercareFlag(newEnabled)
 
-            const data = await response.json()
-
-            if (response.ok && data.aftercare_enabled !== undefined) {
+            if (data.aftercare_enabled !== undefined) {
               // 以服务器返回值为准
               setEnableAftercare(data.aftercare_enabled)
 
@@ -1086,6 +1052,8 @@ export default function DynamicDemo() {
           )}
         </div>
       </div>
+
+      <PostFactionsCard />
 
       <CommentaryAnalysisPanel
         status={postAnalysis.analysisStatus}

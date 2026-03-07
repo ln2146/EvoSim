@@ -10,6 +10,7 @@ import ConfigPage from './pages/ConfigPage'
 import DynamicDemo from './pages/DynamicDemo'
 import TestGraph from './pages/TestGraph'
 import InterviewPage from './pages/InterviewPage'
+import FilterBubbleObservation from './pages/FilterBubbleObservation'
 
 function App() {
   return (
@@ -33,6 +34,7 @@ function App() {
               <Route path="/monitoring" element={<DataMonitoring />} />
               <Route path="/experiment" element={<ExperimentManagement />} />
               <Route path="/visualization" element={<DataVisualization />} />
+              <Route path="/filter-bubble" element={<FilterBubbleObservation />} />
               <Route path="/interview" element={<InterviewPage />} />
               <Route path="/config" element={<ConfigPage />} />
             </Routes>
