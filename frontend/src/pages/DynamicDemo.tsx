@@ -26,10 +26,11 @@ import { useLeaderboard } from '../hooks/useLeaderboard'
 import { usePostDetail } from '../hooks/usePostDetail'
 import { usePostComments } from '../hooks/usePostComments'
 import { usePostAnalysis } from '../hooks/usePostAnalysis'
-import { setAttackMode, setModerationFlag, setAttackFlag, setAftercareFlag, detectFactions, getPostFactions, getSavedSnapshots, type FactionReport, type PostFactionsSummary } from '../services/api'
+import { setAttackMode as setAttackModeApi, setModerationFlag, setAttackFlag, setAftercareFlag, detectFactions, getPostFactions, getSavedSnapshots, type FactionReport, type PostFactionsSummary } from '../services/api'
 import { getAttackModeLabel, resolveAttackToggleAction, type AttackMode } from '../lib/attackModeToggle'
 import SaveSnapshotDialog from '../components/SaveSnapshotDialog'
 import SnapshotSelectDialog from '../components/SnapshotSelectDialog'
+import { useSimulation } from '../contexts/SimulationContext'
 
 const DEMO_BACKEND_LOG_LINES: string[] = [
   '2026-01-28 21:13:09,286 - INFO - 📊 Phase 1: perception and decision',
@@ -343,12 +344,50 @@ function useDynamicDemoSSE() {
 
 export default function DynamicDemo() {
   const navigate = useNavigate()
+
+  // 使用全局仿真状态 Context
+  const simulation = useSimulation()
+  const {
+    isRunning,
+    setIsRunning,
+    enableAttack,
+    setEnableAttack,
+    attackMode,
+    setAttackMode,
+    enableAftercare,
+    setEnableAftercare,
+    enableEvoCorps,
+    setEnableEvoCorps,
+    enableModeration,
+    setEnableModeration,
+    selectedPost,
+    setSelectedPost,
+    flowState,
+    setFlowState,
+    opinionBalanceStartMs,
+    setOpinionBalanceStartMs,
+    defenseDashboard,
+    setDefenseDashboard,
+    factionReport,
+    setFactionReport,
+    postFactions,
+    setPostFactions,
+    isStarting,
+    setIsStarting,
+    isStopping,
+    setIsStopping,
+    isTogglingAttack,
+    setIsTogglingAttack,
+    isTogglingAftercare,
+    setIsTogglingAftercare,
+    isTogglingModeration,
+    setIsTogglingModeration,
+  } = simulation
+
   const {
     data,
     error,
     leaderboardLoading,
-    selectedPost,
-    setSelectedPost,
     commentSort,
     setCommentSort,
     postDetail,
@@ -359,78 +398,18 @@ export default function DynamicDemo() {
   // 集成 usePostAnalysis Hook
   const postAnalysis = usePostAnalysis({ defaultInterval: 60000 })
 
-  const [isRunning, setIsRunning] = useState(false)
-  const [enableAttack, setEnableAttack] = useState(false)
-  const [attackMode, setAttackModeState] = useState<AttackMode | null>(null)
+  // 本地 UI 状态（不需要持久化）
   const [attackModeDialogOpen, setAttackModeDialogOpen] = useState(false)
-  const [enableAftercare, setEnableAftercare] = useState(false)
-  const [enableEvoCorps, setEnableEvoCorps] = useState(false)
-  const [enableModeration, setEnableModeration] = useState(false)
-
   const [analysisOpen, setAnalysisOpen] = useState(false)
-
-  const [isStarting, setIsStarting] = useState(false)
-  const [isStopping, setIsStopping] = useState(false)
   const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [showSnapshotSelect, setShowSnapshotSelect] = useState(false)
-  const [isTogglingAttack, setIsTogglingAttack] = useState(false)
-  const [isTogglingAftercare, setIsTogglingAftercare] = useState(false)
-  const [isTogglingModeration, setIsTogglingModeration] = useState(false)
 
-  const [flowState, setFlowState] = useState<FlowState>(() => createInitialFlowState())
-  const [opinionBalanceStartMs, setOpinionBalanceStartMs] = useState<number | null>(null)
   const enableEvoCorpsRef = useRef<boolean>(false)
   const streamRef = useRef<LogStream | null>(null)
   const unsubscribeRef = useRef<null | (() => void)>(null)
   const renderQueueRef = useRef<ReturnType<typeof createTimestampSmoothLineQueue> | null>(null)
-  const hasCheckedInitialStatusRef = useRef(false)
 
-  // 添加状态轮询机制
-  useEffect(() => {
-    const checkStatus = async () => {
-      try {
-        const response = await fetch('/api/dynamic/status')
-        const data = await response.json()
-
-        // 检查 database 和 main 进程状态
-        const dbRunning = data.database?.status === 'running'
-        const mainRunning = data.main?.status === 'running'
-        const bothRunning = dbRunning && mainRunning
-
-        setIsRunning(bothRunning)
-
-        // 只在页面首次加载时，如果系统未运行且有追踪数据，则清除缓存
-        if (!hasCheckedInitialStatusRef.current) {
-          hasCheckedInitialStatusRef.current = true
-          if (!bothRunning && postAnalysis.isTracking) {
-            postAnalysis.stopTracking()
-          }
-        }
-
-        // NOTE: Do not auto-toggle the opinion balance panel based on backend status.
-        // The panel should start streaming only after the user clicks the toggle (so we can
-        // treat that moment as the "start time" for which logs should be shown).
-
-        // 只在演示运行时同步控制标志，避免覆盖用户在启动前预置的状态
-        if (bothRunning && data.control_flags) {
-          setEnableAttack(data.control_flags.attack_enabled ?? false)
-          setAttackModeState((data.control_flags.attack_mode as AttackMode | undefined) ?? 'swarm')
-          setEnableAftercare(data.control_flags.aftercare_enabled ?? false)
-          setEnableModeration(data.control_flags.moderation_enabled ?? false)
-        }
-      } catch (error) {
-        console.error('Failed to check status:', error)
-      }
-    }
-
-    // 初始检查
-    checkStatus()
-
-    // 每 2 秒轮询一次
-    const interval = setInterval(checkStatus, 2000)
-
-    return () => clearInterval(interval)
-  }, [])
+  // 注：状态轮询已在 SimulationContext 中统一实现，此处不再重复轮询
 
   useEffect(() => {
     enableEvoCorpsRef.current = enableEvoCorps
@@ -524,7 +503,7 @@ export default function DynamicDemo() {
   }, [enableEvoCorps, opinionBalanceStartMs])
 
   // Defense dashboard state — polls every 10 s while simulation is running
-  const [defenseDashboard, setDefenseDashboard] = useState<DefenseDashboard | null>(null)
+  // 注：defenseDashboard 状态已在 SimulationContext 中管理
   const [defenseFetching, setDefenseFetching] = useState(false)
   useEffect(() => {
     if (!isRunning) return
@@ -539,11 +518,10 @@ export default function DynamicDemo() {
     fetchDashboard()
     const id = setInterval(fetchDashboard, 10_000)
     return () => clearInterval(id)
-  }, [isRunning])
+  }, [isRunning, setDefenseDashboard])
 
   // ==================== 派系分析数据 ====================
-  const [factionReport, setFactionReport] = useState<FactionReport | null>(null)
-  const [postFactions, setPostFactions] = useState<PostFactionsSummary | null>(null)
+  // 注：factionReport, postFactions 状态已在 SimulationContext 中管理
   const [factionLoading, setFactionLoading] = useState(false)
 
   const fetchFactionData = useCallback(() => {
@@ -645,7 +623,7 @@ export default function DynamicDemo() {
           const syncs: Array<Promise<unknown>> = []
           if (preAttack) {
             if (preAttackMode) {
-              syncs.push(setAttackMode(preAttackMode).catch(() => {}))
+              syncs.push(setAttackModeApi(preAttackMode).catch(() => {}))
             }
             syncs.push(setAttackFlag(true).catch(() => {}))
           }
@@ -714,7 +692,7 @@ export default function DynamicDemo() {
         enableEvoCorps={enableEvoCorps}
         enableModeration={enableModeration}
         onSelectAttackMode={(mode) => {
-          setAttackModeState(mode)
+          setAttackMode(mode)
           setAttackModeDialogOpen(false)
           void (async () => {
             const action = resolveAttackToggleAction({
@@ -776,7 +754,7 @@ export default function DynamicDemo() {
             }
             if (!isRunning) {
               setEnableAttack(false)
-              setAttackModeState(null)
+              setAttackMode(null)
               return
             }
           }
@@ -794,7 +772,7 @@ export default function DynamicDemo() {
               // 以服务器返回值为准
               setEnableAttack(data.attack_enabled)
               if (!data.attack_enabled) {
-                setAttackModeState(null)
+                setAttackMode(null)
               }
 
               // 显示成功提示
