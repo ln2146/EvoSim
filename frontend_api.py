@@ -3439,6 +3439,21 @@ def set_aftercare_flag():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/control/attack-mode', methods=['POST'])
+def set_attack_mode():
+    """Set attack mode (proxy to control server)"""
+    try:
+        import requests
+        data = request.get_json()
+        mode = data.get('mode', 'swarm')
+        response = requests.post(
+            'http://localhost:8000/control/attack-mode',
+            json={'mode': mode},
+            timeout=5
+        )
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 @app.route('/api/control/auto-status', methods=['POST'])
 def set_auto_status_flag():
     """Set auto-status flag (proxy to control server)"""
@@ -3457,19 +3472,145 @@ def set_auto_status_flag():
 
 
 @app.route('/analysis/post-comments', methods=['POST'])
-def proxy_analysis_post_comments():
-    """Proxy to main.py control server (port 8000) for post comment analysis"""
+def analyze_post_comments_direct():
+    """直接分析帖子评论（不再代理到 8000 端口）"""
+    import requests as req
+    import re
+
+    data = request.get_json()
+    post_id = data.get('post_id') if data else None
+    if not post_id:
+        return jsonify({'error': 'post_id is required'}), 400
+
+    db_path = os.path.join(BASE_DIR, 'database', 'simulation.db')
+    if not os.path.exists(db_path):
+        return jsonify({'error': 'simulation.db not found'}), 404
+
+    # 1) 读取帖子与评论
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT post_id, content, author_id, created_at, num_comments FROM posts WHERE post_id = ?",
+        (post_id,),
+    )
+    post_row = cursor.fetchone()
+    if not post_row:
+        conn.close()
+        return jsonify({'error': f'Post {post_id} not found'}), 404
+
+    cursor.execute(
+        "SELECT comment_id, content, author_id, created_at, num_likes FROM comments WHERE post_id = ? ORDER BY num_likes DESC, created_at ASC LIMIT 30",
+        (post_id,),
+    )
+    comment_rows = cursor.fetchall()
+    conn.close()
+
+    post_content = post_row['content'] or ''
+    post_author = post_row['author_id']
+
+    comments_block_lines = []
+    for idx, c in enumerate(comment_rows, start=1):
+        comments_block_lines.append(f"[{idx}] author={c['author_id']} likes={c['num_likes']}: {c['content']}")
+    comments_block = "\n".join(comments_block_lines) if comments_block_lines else "(暂无评论)"
+
+    # 2) 构造 LLM 提示词
+    system_prompt = (
+        "你是一名严谨的舆论分析助手，专门分析某个帖子评论区的整体情绪氛围、观点极端程度，"
+        "并用自然语言总结多数观点与少数观点。你需要返回结构化 JSON，便于前端程序直接读取。"
+    )
+    user_prompt = f"""请基于下面的内容进行分析：
+
+    [主帖]
+    作者: {post_author}
+    内容: {post_content}
+
+    [评论区]
+    {comments_block}
+
+    你的任务是：
+    1. **内部评估每条评论**（不在最终输出中显示）：
+    * 对每条评论的情感分数（sentiment_score）进行评估，使用以下五个离散值之一：0, 0.25, 0.5, 0.75, 1。
+    * 对每条评论的极端程度分数（extremeness_score）进行评估，使用以下五个离散值之一：0, 0.25, 0.5, 0.75, 1。
+
+    2. **计算整体分数**：
+    * 基于所有评论的情感分数，计算平均值，得到最终的 `sentiment_score_overall`。
+    * 基于所有评论的极端程度分数，计算平均值，得到最终的 `extremeness_score_overall`。
+    * **重要**：这两个整体分数应为 0 到 1 之间的任意数值（不限于那五个离散值），例如 0.33、0.67 等，以更精确地反映整体水平。
+
+    3. 用一段中文总结评论区的主要观点结构。
+
+    请严格按照下面的 JSON 格式直接作答，只返回整体分析结果：
+
+    {{
+    "sentiment_score_overall": 0.42,
+    "extremeness_score_overall": 0.38,
+    "summary": "一段中文总结，概括评论区的主要观点结构。"
+    }}"""
+
+    # 3) 调用 LLM API
     try:
-        import requests as req
-        data = request.get_json()
+        from keys import OPENAI_API_KEY, OPENAI_BASE_URL
+        base_url = OPENAI_BASE_URL.rstrip("/") if OPENAI_BASE_URL else "https://api.openai.com/v1"
         response = req.post(
-            'http://localhost:8000/analysis/post-comments',
-            json=data,
-            timeout=60
+            url=f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "max_tokens": 600,
+                "temperature": 0.5,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=120,
         )
-        return jsonify(response.json()), response.status_code
+
+        if response.status_code != 200:
+            raise RuntimeError(f"LLM HTTP {response.status_code}: {response.text}")
+
+        resp_json = response.json()
+        raw_content = (
+            resp_json.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+
+        if not raw_content:
+            analysis_data = {"sentiment_score_overall": None, "extremeness_score_overall": None, "summary": None, "error": "LLM returned empty content"}
+        else:
+            try:
+                analysis_data = json.loads(raw_content)
+            except Exception:
+                m = re.search(r'\{.*\}', raw_content, re.DOTALL)
+                if m:
+                    try:
+                        analysis_data = json.loads(m.group())
+                    except Exception as e2:
+                        analysis_data = {"sentiment_score_overall": None, "extremeness_score_overall": None, "summary": None, "error": f"json_parse_failed: {e2}"}
+                else:
+                    analysis_data = {"sentiment_score_overall": None, "extremeness_score_overall": None, "summary": None, "error": "no_json_in_response"}
+
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        analysis_data = {"sentiment_score_overall": None, "extremeness_score_overall": None, "summary": None, "error": str(e)}
+
+    return jsonify({
+        "post_id": post_id,
+        "post_content": post_content,
+        "num_comments": len(comment_rows),
+        "sentiment_score_overall": analysis_data.get("sentiment_score_overall"),
+        "extremeness_score_overall": analysis_data.get("extremeness_score_overall"),
+        "summary": analysis_data.get("summary"),
+        "analysis_raw": analysis_data.get("raw_text"),
+        "error": analysis_data.get("error"),
+    }), 200
 
 
 @app.route('/api/defense/dashboard', methods=['GET'])
@@ -3826,10 +3967,10 @@ def get_post_detail_by_id(post_id: str):
         if not os.path.exists(db_path):
             return jsonify({'error': 'Database not found'}), 404
         
-        # 查询帖子
-        conn = sqlite3.connect(db_path)
+        # 查询帖子（设置 timeout 避免模拟写入时锁冲突）
+        conn = sqlite3.connect(db_path, timeout=10)
         cursor = conn.cursor()
-        
+
         # 过滤条件：status IS NULL OR status != 'taken_down'
         cursor.execute("""
             SELECT 
@@ -3922,10 +4063,10 @@ def get_post_comments_by_id(post_id: str):
         if not os.path.exists(db_path):
             return jsonify({'error': 'Database not found'}), 404
         
-        # 查询评论
-        conn = sqlite3.connect(db_path)
+        # 查询评论（设置 busy_timeout 避免模拟写入时锁冲突）
+        conn = sqlite3.connect(db_path, timeout=10)
         cursor = conn.cursor()
-        
+
         # 根据 sort 参数确定排序方式
         if sort_param == 'likes':
             order_by = 'num_likes DESC, created_at DESC'
@@ -4328,11 +4469,28 @@ def detect_factions():
             return jsonify({'error': '数据库不存在'}), 404
 
         from src.community_detector import CommunityDetector
+        import numpy as np
 
         detector = CommunityDetector(db_path, vector_dim=128)
         report = detector.get_community_report()
 
-        return jsonify(report)
+        # numpy 类型转 Python 原生类型，避免 JSON 序列化失败
+        def sanitize(obj):
+            if isinstance(obj, (np.integer,)):
+                return int(obj)
+            if isinstance(obj, (np.floating,)):
+                return float(obj)
+            if isinstance(obj, np.bool_):
+                return bool(obj)
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, dict):
+                return {k: sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                return [sanitize(v) for v in obj]
+            return obj
+
+        return jsonify(sanitize(report))
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -4364,6 +4522,7 @@ def get_post_factions():
             return jsonify({'error': '数据库不存在'}), 404
 
         from src.community_detector import CommunityDetector
+        import numpy as np
 
         detector = CommunityDetector(db_path, vector_dim=128)
         summary = detector.get_post_stances_summary(
@@ -4371,7 +4530,23 @@ def get_post_factions():
             min_comments=min_comments
         )
 
-        return jsonify(summary)
+        # numpy 类型转 Python 原生类型
+        def sanitize(obj):
+            if isinstance(obj, (np.integer,)):
+                return int(obj)
+            if isinstance(obj, (np.floating,)):
+                return float(obj)
+            if isinstance(obj, np.bool_):
+                return bool(obj)
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, dict):
+                return {k: sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, (list, tuple)):
+                return [sanitize(v) for v in obj]
+            return obj
+
+        return jsonify(sanitize(summary))
     except Exception as e:
         import traceback
         traceback.print_exc()

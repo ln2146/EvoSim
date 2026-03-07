@@ -64,87 +64,6 @@ function MetricGauge({ value, label, color }: { value: number; label: string; co
   )
 }
 
-// 雷达图组件（简化版）
-function RadarChart({ data }: { data: { label: string; value: number }[] }) {
-  const size = 200
-  const center = size / 2
-  const radius = 80
-  const angleStep = (Math.PI * 2) / data.length
-
-  const points = data.map((item, index) => {
-    const angle = index * angleStep - Math.PI / 2
-    const value = item.value
-    const x = center + Math.cos(angle) * radius * value
-    const y = center + Math.sin(angle) * radius * value
-    return `${x},${y}`
-  }).join(' ')
-
-  const labelPoints = data.map((item, index) => {
-    const angle = index * angleStep - Math.PI / 2
-    const x = center + Math.cos(angle) * (radius + 20)
-    const y = center + Math.sin(angle) * (radius + 20)
-    return { x, y, label: item.label }
-  })
-
-  return (
-    <svg width={size} height={size} className="mx-auto">
-      {/* 背景网格 */}
-      {[0.2, 0.4, 0.6, 0.8, 1].map((scale) => (
-        <polygon
-          key={scale}
-          points={data.map((_, index) => {
-            const angle = index * angleStep - Math.PI / 2
-            const x = center + Math.cos(angle) * radius * scale
-            const y = center + Math.sin(angle) * radius * scale
-            return `${x},${y}`
-          }).join(' ')}
-          fill="none"
-          stroke="#e2e8f0"
-          strokeWidth="1"
-        />
-      ))}
-
-      {/* 数据区域 */}
-      <polygon
-        points={points}
-        fill="rgba(59, 130, 246, 0.2)"
-        stroke="#3b82f6"
-        strokeWidth="2"
-      />
-
-      {/* 数据点 */}
-      {data.map((item, index) => {
-        const angle = index * angleStep - Math.PI / 2
-        const x = center + Math.cos(angle) * radius * item.value
-        const y = center + Math.sin(angle) * radius * item.value
-        return (
-          <circle
-            key={index}
-            cx={x}
-            cy={y}
-            r="4"
-            fill="#3b82f6"
-          />
-        )
-      })}
-
-      {/* 标签 */}
-      {labelPoints.map((point, index) => (
-        <text
-          key={index}
-          x={point.x}
-          y={point.y}
-          textAnchor="middle"
-          dominantBaseline="middle"
-          className="text-xs fill-slate-600"
-        >
-          {point.label}
-        </text>
-      ))}
-    </svg>
-  )
-}
-
 export default function FilterBubbleObservation() {
   const [databases, setDatabases] = useState<string[]>([])
   const [selectedDb, setSelectedDb] = useState<string>('')
@@ -394,19 +313,6 @@ export default function FilterBubbleObservation() {
                   value={selectedUser.activity_breadth ?? 0}
                   label="活跃广度"
                   color="#22c55e"
-                />
-              </div>
-            </div>
-
-            {/* 雷达图 */}
-            <div className="mb-8">
-              <h3 className="text-xl font-bold text-slate-800 mb-4">综合指标雷达图</h3>
-              <div className="bg-white p-6 rounded-xl border border-slate-200">
-                <RadarChart
-                  data={[
-                    { label: '同质化', value: selectedUser.homogeneity_index ?? 0 },
-                    { label: '活跃广度', value: selectedUser.activity_breadth ?? 0 }
-                  ]}
                 />
               </div>
             </div>

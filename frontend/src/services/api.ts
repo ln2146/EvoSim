@@ -289,17 +289,8 @@ export const setAttackMode = async (
   mode: 'swarm' | 'dispersed' | 'chain'
 ): Promise<{ attack_mode: 'swarm' | 'dispersed' | 'chain' }> => {
   try {
-    const response = await fetch('http://localhost:8000/control/attack-mode', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ mode }),
-    })
-    if (!response.ok) {
-      throw new Error(`Request failed with status code ${response.status}`)
-    }
-    return await response.json()
+    const response = await api.post('/control/attack-mode', { mode })
+    return response.data
   } catch (error) {
     console.error('Failed to set attack mode:', error)
     throw error
@@ -459,35 +450,23 @@ export const getBubbleTrend = async (
 // ==================== 社区发现与派系分析相关类型和API ====================
 
 export interface CommunityInfo {
-  community_id: number
+  id: number
   name: string
   size: number
-  density: number
-  avg_position: number
-  key_topics: string[]
+  cohesion: number
+  stance_distribution: Record<string, number>
   is_echo_chamber: boolean
-  cross_community_links: number
   members: string[]
 }
 
-export interface ModularityInfo {
-  modularity: number
+export interface FactionReport {
   num_communities: number
+  total_users: number
   avg_community_size: number
   max_community_size: number
-  partition_quality: string
-}
-
-export interface FactionReport {
+  num_echo_chambers: number
+  avg_cohesion: number
   communities: CommunityInfo[]
-  modularity: ModularityInfo
-  network_stats: {
-    total_nodes: number
-    total_edges: number
-    avg_degree: number
-    network_density: number
-  }
-  faction_map_sample: Record<string, string>
 }
 
 // 检测派系

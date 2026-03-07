@@ -627,12 +627,18 @@ class CommunityDetector:
 
             # 聚类
             if method == 'dbscan':
-                # DBSCAN（自动确定社区数量）
-                clusterer = DBSCAN(eps=0.5, min_samples=min_samples, metric='cosine')
+                # DBSCAN（自动确定社区数量），放宽 eps 以适应仿真数据
+                clusterer = DBSCAN(eps=0.8, min_samples=min(min_samples, 2), metric='cosine')
                 labels = clusterer.fit_predict(X_scaled)
+                # 如果 DBSCAN 全部标为噪声（无社区），自动回退到 KMeans
+                if all(l == -1 for l in labels):
+                    print("[CommunityDetector] DBSCAN 未发现社区，回退到 KMeans")
+                    actual_k = min(n_clusters, len(users))
+                    clusterer = KMeans(n_clusters=actual_k, random_state=42, n_init=10)
+                    labels = clusterer.fit_predict(X_scaled)
             elif method == 'kmeans':
                 # K-Means（需要指定社区数量）
-                clusterer = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+                clusterer = KMeans(n_clusters=min(n_clusters, len(users)), random_state=42, n_init=10)
                 labels = clusterer.fit_predict(X_scaled)
             elif method == 'hierarchical':
                 # 层次聚类
@@ -1210,15 +1216,15 @@ class CommunityDetector:
             'avg_community_size': total_users / len(communities) if communities else 0,
             'max_community_size': max(len(c.members) for c in communities) if communities else 0,
             'num_echo_chambers': sum(1 for c in communities if c.is_echo_chamber),
-            'avg_cohesion': np.mean([c.cohesion for c in communities]),
+            'avg_cohesion': float(np.mean([c.cohesion for c in communities])),
             'communities': [
                 {
-                    'id': c.community_id,
+                    'id': int(c.community_id),
                     'name': c.name,
                     'size': len(c.members),
-                    'cohesion': c.cohesion,
-                    'stance_distribution': c.stance_distribution,
-                    'is_echo_chamber': c.is_echo_chamber,
+                    'cohesion': float(c.cohesion),
+                    'stance_distribution': {k: float(v) for k, v in c.stance_distribution.items()},
+                    'is_echo_chamber': bool(c.is_echo_chamber),
                     'members': c.members
                 }
                 for c in communities_sorted

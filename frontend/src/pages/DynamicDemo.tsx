@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ElementType, type ReactNode } from 'react'
 import { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { Activity, Play, Square, Shield, Bug, Sparkles, Flame, MessageSquare, ArrowLeft, ThumbsUp, Share2, MessageCircle, BarChart3, Eye, RefreshCw } from 'lucide-react'
+import { Activity, Play, Square, Shield, Bug, Sparkles, Flame, MessageSquare, ArrowLeft, ThumbsUp, Share2, MessageCircle, BarChart3, Eye, RefreshCw, Users } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { createInitialFlowState, routeLogLine, stripLogPrefix, parseLogTimestampMs, type FlowState, type Role } from '../lib/interventionFlow/logRouter'
@@ -26,8 +26,7 @@ import { useLeaderboard } from '../hooks/useLeaderboard'
 import { usePostDetail } from '../hooks/usePostDetail'
 import { usePostComments } from '../hooks/usePostComments'
 import { usePostAnalysis } from '../hooks/usePostAnalysis'
-import { setAttackMode, setModerationFlag, setAttackFlag, setAftercareFlag } from '../services/api'
-import PostFactionsCard from '../components/PostFactionsCard'
+import { setAttackMode, setModerationFlag, setAttackFlag, setAftercareFlag, detectFactions, getPostFactions, type FactionReport, type PostFactionsSummary } from '../services/api'
 import { getAttackModeLabel, resolveAttackToggleAction, type AttackMode } from '../lib/attackModeToggle'
 
 const DEMO_BACKEND_LOG_LINES: string[] = [
@@ -538,6 +537,34 @@ export default function DynamicDemo() {
     return () => clearInterval(id)
   }, [isRunning])
 
+  // ==================== 派系分析数据 ====================
+  const [factionReport, setFactionReport] = useState<FactionReport | null>(null)
+  const [postFactions, setPostFactions] = useState<PostFactionsSummary | null>(null)
+  const [factionLoading, setFactionLoading] = useState(false)
+
+  const fetchFactionData = useCallback(() => {
+    setFactionLoading(true)
+    Promise.all([
+      detectFactions('simulation'),
+      getPostFactions('simulation', 15, 0)
+    ])
+      .then(([report, factions]) => {
+        if (report) setFactionReport(report)
+        if (factions) setPostFactions(factions)
+      })
+      .catch(() => {})
+      .finally(() => setFactionLoading(false))
+  }, [])
+
+  useEffect(() => {
+    // 初始加载一次
+    fetchFactionData()
+    if (!isRunning) return
+    // 运行时每 30 秒轮询
+    const id = setInterval(fetchFactionData, 30_000)
+    return () => clearInterval(id)
+  }, [isRunning, fetchFactionData])
+
   // 使用 postAnalysis Hook 的趋势数据，如果没有追踪或数据为空则使用空数组
   const metricsSeries = postAnalysis.isTracking && postAnalysis.metricsSeries.length > 0
     ? postAnalysis.metricsSeries
@@ -1017,6 +1044,7 @@ export default function DynamicDemo() {
                 error={error || undefined}
                 isTracking={postAnalysis.trackedPostId === (selectedPost.postId || selectedPost.id)}
                 onStartTracking={() => postAnalysis.startTracking(selectedPost.postId || selectedPost.id)}
+                onStopTracking={() => postAnalysis.pauseTracking()}
                 onOpenConfig={() => setAnalysisOpen(true)}
               />
               <CommentsCard
@@ -1053,14 +1081,15 @@ export default function DynamicDemo() {
         </div>
       </div>
 
-      <PostFactionsCard />
-
-      <CommentaryAnalysisPanel
-        status={postAnalysis.analysisStatus}
-        summary={postAnalysis.summary}
-        trackedPostId={postAnalysis.trackedPostId}
-        trackedPostStats={trackedPostData}
-      />
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <CommentaryAnalysisPanel
+          status={postAnalysis.analysisStatus}
+          summary={postAnalysis.summary}
+          trackedPostId={postAnalysis.trackedPostId}
+          trackedPostStats={trackedPostData}
+        />
+        <FactionOverviewCard report={factionReport} postFactions={postFactions} isLoading={factionLoading} onRefresh={fetchFactionData} />
+      </div>
 
       <AnalysisConfigDialog
         open={analysisOpen}
@@ -1383,6 +1412,7 @@ function PostDetailCard({
   error,
   isTracking,
   onStartTracking,
+  onStopTracking,
   onOpenConfig
 }: {
   post: HeatPost
@@ -1391,6 +1421,7 @@ function PostDetailCard({
   error?: Error | null
   isTracking?: boolean
   onStartTracking?: () => void
+  onStopTracking?: () => void
   onOpenConfig?: () => void
 }) {
   // 优先使用 postDetail 的完整内容，否则使用 post 的 summary
@@ -1422,26 +1453,29 @@ function PostDetailCard({
               返回榜单
             </button>
             <div className="flex items-center gap-2">
-              {onStartTracking && (
+              {isTracking && onStopTracking ? (
+                <button
+                  onClick={onStopTracking}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium inline-flex items-center justify-center gap-1.5 transition-all bg-gradient-to-r from-red-500 to-rose-500 text-white hover:shadow-lg"
+                  title="关闭分析，停止追踪"
+                >
+                  <Eye size={14} />
+                  关闭分析
+                </button>
+              ) : onStartTracking ? (
                 <button
                   onClick={onStartTracking}
-                  disabled={isTracking || hasNoComments}
-                  className={`px-3 py-1.5 rounded-lg text-sm font-medium inline-flex items-center justify-center gap-1.5 transition-all ${isTracking || hasNoComments
+                  disabled={hasNoComments}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium inline-flex items-center justify-center gap-1.5 transition-all ${hasNoComments
                     ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
                     : 'bg-gradient-to-r from-blue-500 to-green-500 text-white hover:shadow-lg'
                     }`}
-                  title={
-                    hasNoComments
-                      ? '该帖子没有评论'
-                      : isTracking
-                        ? '已在追踪中'
-                        : '开始分析此帖子'
-                  }
+                  title={hasNoComments ? '该帖子没有评论' : '开始分析此帖子'}
                 >
                   <Activity size={14} />
-                  {isTracking ? '分析中' : '开始分析'}
+                  开始分析
                 </button>
-              )}
+              ) : null}
               {onOpenConfig && (
                 <button
                   onClick={onOpenConfig}
@@ -1753,6 +1787,151 @@ function MetricsLineChartCard({ data }: { data: MetricsPoint[] }) {
           </LineChart>
         </ResponsiveContainer>
       </div>
+    </div>
+  )
+}
+
+function FactionOverviewCard({
+  report,
+  postFactions,
+  isLoading,
+  onRefresh
+}: {
+  report: FactionReport | null
+  postFactions: PostFactionsSummary | null
+  isLoading: boolean
+  onRefresh: () => void
+}) {
+  const communities = report?.communities ?? []
+  const numCommunities = report?.num_communities ?? 0
+  const numEchoChambers = report?.num_echo_chambers ?? 0
+  const totalUsers = report?.total_users ?? 0
+
+  const avgSupport = postFactions?.avg_support_ratio ?? 0
+  const avgNeutral = postFactions?.avg_neutral_ratio ?? 0
+  const avgOppose = postFactions?.avg_oppose_ratio ?? 0
+
+  const hottest = postFactions?.hottest_post
+  const divisive = postFactions?.most_divisive_post
+
+  const hasData = numCommunities > 0 || (postFactions?.total_posts_analyzed ?? 0) > 0
+
+  return (
+    <div className="glass-card p-6 flex flex-col">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <Users className="text-purple-500" />
+          <h2 className="text-2xl font-bold text-slate-800">派系分析概览</h2>
+        </div>
+        <button
+          onClick={onRefresh}
+          disabled={isLoading}
+          className="p-1.5 rounded-lg hover:bg-slate-100 transition-colors disabled:opacity-40"
+        >
+          <RefreshCw className={`w-4 h-4 text-slate-400 ${isLoading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      {!hasData ? (
+        <div className="flex-1 flex items-center justify-center py-8">
+          <p className="text-sm text-slate-400">{isLoading ? '正在分析派系数据...' : '暂无派系数据，请先启动仿真'}</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* 摘要指标 */}
+          <div className="flex items-center gap-4 text-sm">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />
+              <span className="text-slate-600">社区 <span className="font-semibold text-slate-800">{numCommunities}</span> 个</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
+              <span className="text-slate-600">回声室 <span className="font-semibold text-slate-800">{numEchoChambers}</span> 个</span>
+            </span>
+            <span className="text-slate-400">|</span>
+            <span className="text-slate-500">覆盖 {totalUsers} 用户</span>
+          </div>
+
+          {/* 全局立场分布 - 堆叠条形图 */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-sm font-medium text-slate-700">全局立场分布</span>
+              <span className="text-xs text-slate-400">基于 {postFactions?.total_posts_analyzed ?? 0} 条帖子</span>
+            </div>
+            <div className="flex items-center justify-between mb-1.5 text-xs">
+              <span className="flex items-center gap-1 font-semibold text-green-600">
+                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                支持 {(avgSupport * 100).toFixed(0)}%
+              </span>
+              <span className="flex items-center gap-1 font-semibold text-slate-500">
+                <span className="w-2 h-2 rounded-full bg-slate-400 inline-block" />
+                中立 {(avgNeutral * 100).toFixed(0)}%
+              </span>
+              <span className="flex items-center gap-1 font-semibold text-red-600">
+                反对 {(avgOppose * 100).toFixed(0)}%
+                <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+              </span>
+            </div>
+            <div className="h-3 w-full rounded-full overflow-hidden flex bg-slate-100">
+              <div className="bg-green-500 transition-all duration-500" style={{ width: `${avgSupport * 100}%` }} />
+              <div className="bg-slate-300 transition-all duration-500" style={{ width: `${avgNeutral * 100}%` }} />
+              <div className="bg-red-500 transition-all duration-500" style={{ width: `${avgOppose * 100}%` }} />
+            </div>
+          </div>
+
+          {/* 各社区概览 */}
+          {communities.length > 0 && (
+            <div>
+              <span className="text-sm font-medium text-slate-700">各社区概览</span>
+              <div className="mt-1.5 space-y-1.5 max-h-[140px] overflow-y-auto">
+                {communities.slice(0, 6).map((c) => (
+                  <div key={c.id} className="flex items-center justify-between text-xs bg-slate-50 rounded-lg px-3 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-slate-700">{c.name}</span>
+                      <span className="text-slate-400">{c.size ?? c.members?.length ?? 0} 人</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400">紧密度 {(c.cohesion ?? 0).toFixed(2)}</span>
+                      {c.is_echo_chamber && (
+                        <span className="text-[10px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded">回声室</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 最火帖 & 最分歧帖 */}
+          <div className="flex gap-3 text-xs">
+            {hottest && (
+              <div className="flex-1 bg-amber-50 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-1 text-amber-600 font-semibold mb-1">
+                  <Flame className="w-3 h-3" /> 最火帖
+                </div>
+                <div className="text-slate-600 truncate">{hottest.post_id}</div>
+                <div className="text-slate-500 mt-0.5">
+                  支持{(hottest.support_ratio * 100).toFixed(0)}%
+                  {' '}中立{(hottest.neutral_ratio * 100).toFixed(0)}%
+                  {' '}反对{(hottest.oppose_ratio * 100).toFixed(0)}%
+                </div>
+              </div>
+            )}
+            {divisive && (
+              <div className="flex-1 bg-rose-50 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-1 text-rose-600 font-semibold mb-1">
+                  <Activity className="w-3 h-3" /> 最分歧帖
+                </div>
+                <div className="text-slate-600 truncate">{divisive.post_id}</div>
+                <div className="text-slate-500 mt-0.5">
+                  支持{(divisive.support_ratio * 100).toFixed(0)}%
+                  {' '}vs 反对{(divisive.oppose_ratio * 100).toFixed(0)}%
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
