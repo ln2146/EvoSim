@@ -375,9 +375,6 @@ export const getFilterBubbleGlobalStats = async (dbName: string): Promise<Filter
       moderate_bubble_users: 0,
       mild_bubble_users: 0,
       network_density: 0,
-      avg_norm_component: 0,
-      avg_entropy_component: 0,
-      avg_angle_component: 0,
     }
   }
 }
@@ -606,3 +603,109 @@ export const getPostFactions = async (
 }
 
 export default api
+
+// ==================== 快照管理 API ====================
+
+export interface SavedSnapshot {
+  id: string
+  name: string
+  description?: string
+  created_at: string
+  saved_at: string
+  tick_count: number
+  total_users: number
+  total_posts: number
+  total_comments: number
+  ticks: Array<{
+    tick: number
+    timestamp: string
+    user_count: number
+    post_count: number
+  }>
+}
+
+export interface SnapshotDetail extends SavedSnapshot {
+  ticks: Array<{
+    tick: number
+    timestamp: string
+    user_count: number
+    post_count: number
+  }>
+}
+
+// 保存命名快照
+export const saveSnapshot = async (name: string, description?: string): Promise<{
+  success: boolean
+  snapshot_id?: string
+  message?: string
+}> => {
+  try {
+    const response = await api.post('/snapshots/save', { name, description })
+    return response.data
+  } catch (error) {
+    console.error('Failed to save snapshot:', error)
+    throw error
+  }
+}
+
+// 获取已保存的快照列表
+export const getSavedSnapshots = async (): Promise<SavedSnapshot[]> => {
+  try {
+    const response = await api.get('/snapshots/saved')
+    return response.data.snapshots || []
+  } catch (error) {
+    console.error('Failed to get saved snapshots:', error)
+    return []
+  }
+}
+
+// 获取单个快照详情
+export const getSnapshotDetail = async (sessionId: string): Promise<SnapshotDetail | null> => {
+  try {
+    const response = await api.get(`/snapshots/${sessionId}`)
+    return response.data
+  } catch (error) {
+    console.error('Failed to get snapshot detail:', error)
+    return null
+  }
+}
+
+// ==================== 时间轴控制 API（桩实现）====================
+
+export interface SnapshotInfo {
+  tick: number
+  timestamp: string
+}
+
+// 设置暂停标志
+export const setPauseFlag = async (paused: boolean): Promise<{ paused: boolean }> => {
+  try {
+    const response = await api.post('/control/pause', { paused })
+    return response.data
+  } catch (error) {
+    console.error('Failed to set pause flag:', error)
+    return { paused }
+  }
+}
+
+// 获取时间步快照列表
+export const getSnapshots = async (): Promise<{ snapshots: SnapshotInfo[] }> => {
+  try {
+    const response = await api.get('/snapshots/timeline')
+    return response.data
+  } catch (error) {
+    console.error('Failed to get snapshots:', error)
+    return { snapshots: [] }
+  }
+}
+
+// 恢复到指定时间步
+export const restoreSnapshot = async (tick: number): Promise<{ success: boolean }> => {
+  try {
+    const response = await api.post('/snapshots/restore', { tick })
+    return response.data
+  } catch (error) {
+    console.error('Failed to restore snapshot:', error)
+    return { success: false }
+  }
+}

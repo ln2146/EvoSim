@@ -216,8 +216,13 @@ class Simulation:
             f"in configs/experiment_config.json, got: {opinion_balance_config.get('feedback_monitoring_interval')!r}"
         )
     
-    async def run(self, num_time_steps: int):
-        """Run the simulation."""
+    async def run(self, num_time_steps: int, start_tick: int = 1):
+        """Run the simulation.
+
+        Args:
+            num_time_steps: 总时间步数
+            start_tick: 起始时间步（从快照恢复时使用）
+        """
         # 创建快照会话（如果启用）
         if self.snapshot_enabled:
             try:
@@ -287,7 +292,12 @@ class Simulation:
                 print(f"🔍 Starting background opinion balance monitoring every {monitoring_interval_minutes} minutes")
 
         # Add tqdm progress bar
-        progress_bar = tqdm(range(num_time_steps), desc="Running simulation")
+        # 如果从快照恢复，从 start_tick-1 开始（因为 step 是 0-indexed）
+        start_step = start_tick - 1 if start_tick > 1 else 0
+        if start_tick > 1:
+            print(f"📌 从 tick {start_tick} 继续运行（跳过前 {start_step} 步）")
+
+        progress_bar = tqdm(range(start_step, num_time_steps), desc="Running simulation")
 
         for step in progress_bar:
             logging.info(f"Time step: {step + 1}")

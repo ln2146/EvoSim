@@ -1,5 +1,5 @@
 {
-    "num_users": 10,
+    "num_users": 3,
     "num_time_steps": 5,
     "agent_config_generation": "file",
     "agent_config_path": "separate",
@@ -22,7 +22,7 @@
         "articles_per_injection": 10
     },
     "moderation": {
-        "content_moderation": false,
+        "content_moderation": true,
         "flag_threshold": 5,
         "note_threshold": 3
     },
@@ -45,7 +45,7 @@
         "standalone_mode": true
     },
     "malicious_bot_system": {
-        "enabled": false,
+        "enabled": true,
         "cluster_size": 15,
         "attack_probability": 1.0,
         "target_post_types": [

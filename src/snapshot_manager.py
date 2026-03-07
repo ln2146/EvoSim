@@ -323,6 +323,324 @@ class SnapshotManager:
             logger.error(f"❌ 获取会话信息失败: {e}")
             return None
 
+    def save_named_snapshot(self, name: str, description: str = "") -> Dict[str, Any]:
+        """
+        将当前会话保存为命名快照
+
+        Args:
+            name: 快照名称
+            description: 快照描述
+
+        Returns:
+            保存结果，包含 success, snapshot_id, message
+        """
+        try:
+            # 如果没有当前会话，尝试找到最近的有 tick 数据的会话
+            if not self.session_id:
+                # 查找最近的有 tick 数据的会话
+                latest_session = None
+                latest_tick_count = 0
+                latest_session_time = ""
+
+                if os.path.exists(self.snapshots_dir):
+                    for session_id in os.listdir(self.snapshots_dir):
+                        session_dir = os.path.join(self.snapshots_dir, session_id)
+                        if not os.path.isdir(session_dir):
+                            continue
+
+                        # 方法1：从 metadata.json 读取 tick 数量
+                        metadata_path = os.path.join(session_dir, "metadata.json")
+                        tick_count = 0
+                        if os.path.exists(metadata_path):
+                            try:
+                                with open(metadata_path, 'r', encoding='utf-8') as f:
+                                    metadata = json.load(f)
+                                tick_count = len(metadata.get("ticks", {}))
+                            except:
+                                pass
+
+                        # 方法2：如果没有 metadata.json，直接计算 tick 目录数量
+                        if tick_count == 0:
+                            for item in os.listdir(session_dir):
+                                if item.startswith("tick_") and os.path.isdir(os.path.join(session_dir, item)):
+                                    tick_count += 1
+
+                        # 选择 tick 数量最多的会话，如果相同则选择最新的
+                        if tick_count > 0:
+                            session_time = session_id.split("_")[0] + session_id.split("_")[1] if "_" in session_id else "0"
+                            if tick_count > latest_tick_count or (tick_count == latest_tick_count and session_time > latest_session_time):
+                                latest_tick_count = tick_count
+                                latest_session = session_id
+                                latest_session_time = session_time
+
+                if latest_session and latest_tick_count > 0:
+                    self.session_id = latest_session
+                    logger.info(f"📌 使用已有会话: {self.session_id} (包含 {latest_tick_count} 个 tick)")
+                else:
+                    # 如果没有找到有 tick 数据的会话，创建新会话
+                    self.session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    session_dir = os.path.join(self.snapshots_dir, self.session_id)
+                    os.makedirs(session_dir, exist_ok=True)
+                    logger.info(f"📌 创建新会话: {self.session_id}")
+
+            session_dir = os.path.join(self.snapshots_dir, self.session_id)
+            metadata_path = os.path.join(session_dir, "metadata.json")
+
+            # 读取现有元数据或创建新的
+            if os.path.exists(metadata_path):
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+            else:
+                metadata = {
+                    "session_id": self.session_id,
+                    "created_at": datetime.now().isoformat(),
+                    "ticks": {}
+                }
+
+            # 读取当前数据库统计信息
+            db_stats = self._get_db_stats(self.simulation_db_path)
+
+            # 更新元数据
+            metadata["name"] = name
+            metadata["description"] = description
+            metadata["saved_at"] = datetime.now().isoformat()
+            metadata["total_users"] = db_stats.get("total_users", 0)
+            metadata["total_posts"] = db_stats.get("total_posts", 0)
+            metadata["total_comments"] = db_stats.get("total_comments", 0)
+
+            # 保存元数据
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+            # 同时更新全局元数据
+            global_metadata = self._load_metadata()
+            global_metadata["name"] = name
+            global_metadata["description"] = description
+            global_metadata["saved_at"] = datetime.now().isoformat()
+            global_metadata["total_users"] = db_stats.get("total_users", 0)
+            global_metadata["total_posts"] = db_stats.get("total_posts", 0)
+            self._save_metadata(global_metadata)
+
+            logger.info(f"✅ 已保存命名快照: {name} (ID: {self.session_id})")
+
+            return {
+                "success": True,
+                "snapshot_id": self.session_id,
+                "message": f"快照 '{name}' 保存成功"
+            }
+
+        except Exception as e:
+            logger.error(f"❌ 保存命名快照失败: {e}")
+            return {
+                "success": False,
+                "snapshot_id": None,
+                "message": f"保存失败: {str(e)}"
+            }
+
+    def list_saved_snapshots(self) -> List[Dict[str, Any]]:
+        """
+        列出所有可用快照（含详细预览）
+
+        包括：
+        1. 已命名的快照（有 name 字段）
+        2. 未命名但有 tick 数据的会话
+
+        Returns:
+            已保存快照列表，包含详细预览信息
+        """
+        try:
+            snapshots = []
+            if not os.path.exists(self.snapshots_dir):
+                return snapshots
+
+            for session_id in os.listdir(self.snapshots_dir):
+                session_dir = os.path.join(self.snapshots_dir, session_id)
+                if not os.path.isdir(session_dir):
+                    continue
+
+                # 尝试读取会话级 metadata.json
+                metadata_path = os.path.join(session_dir, "metadata.json")
+                metadata = {}
+
+                if os.path.exists(metadata_path):
+                    with open(metadata_path, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+
+                # 构建 ticks 列表（用于详细预览）
+                ticks = []
+                ticks_data = metadata.get("ticks", {})
+
+                # 如果 metadata 中没有 ticks 数据，从目录结构读取
+                if not ticks_data:
+                    for item in os.listdir(session_dir):
+                        if item.startswith("tick_") and os.path.isdir(os.path.join(session_dir, item)):
+                            try:
+                                tick_num = int(item.replace("tick_", ""))
+                                tick_dir = os.path.join(session_dir, item)
+                                info_path = os.path.join(tick_dir, "info.json")
+                                tick_info = {"tick": tick_num, "timestamp": "", "user_count": 0, "post_count": 0}
+                                if os.path.exists(info_path):
+                                    with open(info_path, 'r', encoding='utf-8') as f:
+                                        info_data = json.load(f)
+                                    tick_info["timestamp"] = info_data.get("timestamp", "")
+                                    tick_info["user_count"] = info_data.get("user_count", 0)
+                                    tick_info["post_count"] = info_data.get("post_count", 0)
+                                ticks.append(tick_info)
+                            except:
+                                pass
+                else:
+                    for tick_str, tick_info in sorted(ticks_data.items(), key=lambda x: int(x[0])):
+                        tick_num = int(tick_str)
+                        user_count = tick_info.get("user_count", 0)
+                        post_count = tick_info.get("post_count", 0)
+
+                        # 如果 metadata 中没有 user_count/post_count，从 info.json 读取
+                        if user_count == 0 or post_count == 0:
+                            info_file = tick_info.get("info_file", "")
+                            if info_file and os.path.exists(info_file):
+                                try:
+                                    with open(info_file, 'r', encoding='utf-8') as f:
+                                        info_data = json.load(f)
+                                    user_count = info_data.get("user_count", user_count)
+                                    post_count = info_data.get("post_count", post_count)
+                                except:
+                                    pass
+
+                        ticks.append({
+                            "tick": tick_num,
+                            "timestamp": tick_info.get("timestamp", ""),
+                            "user_count": user_count,
+                            "post_count": post_count
+                        })
+
+                # 按 tick 号排序
+                ticks.sort(key=lambda x: x["tick"])
+
+                # 跳过没有任何 tick 数据的会话
+                if not ticks:
+                    continue
+
+                # 使用命名快照的名称，或者使用会话 ID 作为默认名称
+                snapshot_name = metadata.get("name", "")
+                if not snapshot_name:
+                    # 未命名快照，使用时间戳作为显示名称
+                    try:
+                        date_part, time_part = session_id.split("_")
+                        snapshot_name = f"未命名快照 ({date_part} {time_part[:2]}:{time_part[2:]})"
+                    except:
+                        snapshot_name = f"未命名快照 ({session_id})"
+
+                snapshot_info = {
+                    "id": session_id,
+                    "name": snapshot_name,
+                    "description": metadata.get("description", ""),
+                    "created_at": metadata.get("created_at", ""),
+                    "saved_at": metadata.get("saved_at", ""),
+                    "tick_count": len(ticks),
+                    "total_users": metadata.get("total_users", 0),
+                    "total_posts": metadata.get("total_posts", 0),
+                    "total_comments": metadata.get("total_comments", 0),
+                    "ticks": ticks,
+                    "is_named": bool(metadata.get("name"))  # 标记是否为命名快照
+                }
+                snapshots.append(snapshot_info)
+
+            # 按保存时间排序（最新的在前）
+            snapshots.sort(key=lambda x: x.get("saved_at", "") or x.get("created_at", ""), reverse=True)
+            return snapshots
+
+        except Exception as e:
+            logger.error(f"❌ 列出已保存快照失败: {e}")
+            return []
+
+    def get_saved_snapshot_detail(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """
+        获取单个已保存快照的详细信息
+
+        Args:
+            session_id: 会话ID
+
+        Returns:
+            快照详细信息，包含所有 tick
+        """
+        try:
+            metadata = self.get_session_info(session_id)
+            if not metadata:
+                return None
+
+            # 如果没有 name 字段，说明不是已保存的命名快照
+            if not metadata.get("name"):
+                return None
+
+            # 构建 ticks 列表
+            ticks = []
+            ticks_data = metadata.get("ticks", {})
+            for tick_str, tick_info in sorted(ticks_data.items(), key=lambda x: int(x[0])):
+                ticks.append({
+                    "tick": int(tick_str),
+                    "timestamp": tick_info.get("timestamp", ""),
+                    "user_count": tick_info.get("user_count", 0),
+                    "post_count": tick_info.get("post_count", 0)
+                })
+
+            return {
+                "id": session_id,
+                "name": metadata.get("name", session_id),
+                "description": metadata.get("description", ""),
+                "created_at": metadata.get("created_at", ""),
+                "saved_at": metadata.get("saved_at", ""),
+                "tick_count": len(ticks),
+                "total_users": metadata.get("total_users", 0),
+                "total_posts": metadata.get("total_posts", 0),
+                "total_comments": metadata.get("total_comments", 0),
+                "ticks": ticks
+            }
+
+        except Exception as e:
+            logger.error(f"❌ 获取快照详情失败: {e}")
+            return None
+
+    def _get_db_stats(self, db_path: str) -> Dict[str, int]:
+        """
+        从数据库读取统计信息
+
+        Args:
+            db_path: 数据库路径
+
+        Returns:
+            统计信息字典
+        """
+        try:
+            if not os.path.exists(db_path):
+                return {"total_users": 0, "total_posts": 0, "total_comments": 0}
+
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+
+            # 获取用户数
+            cursor.execute("SELECT COUNT(*) FROM users")
+            total_users = cursor.fetchone()[0]
+
+            # 获取帖子数
+            cursor.execute("SELECT COUNT(*) FROM posts")
+            total_posts = cursor.fetchone()[0]
+
+            # 获取评论数
+            cursor.execute("SELECT COUNT(*) FROM comments")
+            total_comments = cursor.fetchone()[0]
+
+            conn.close()
+
+            return {
+                "total_users": total_users,
+                "total_posts": total_posts,
+                "total_comments": total_comments
+            }
+
+        except Exception as e:
+            logger.error(f"❌ 读取数据库统计失败: {e}")
+            return {"total_users": 0, "total_posts": 0, "total_comments": 0}
+
     def _load_metadata(self) -> Dict[str, Any]:
         """加载元数据"""
         try:
@@ -346,6 +664,23 @@ class SnapshotManager:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"❌ 保存元数据失败: {e}")
+
+    def _load_session_metadata(self, session_id: str) -> Dict[str, Any]:
+        """加载会话级别的元数据"""
+        try:
+            session_metadata_path = os.path.join(self.snapshots_dir, session_id, "metadata.json")
+            if os.path.exists(session_metadata_path):
+                with open(session_metadata_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.error(f"❌ 加载会话元数据失败: {e}")
+
+        # 返回默认会话元数据
+        return {
+            "session_id": session_id,
+            "created_at": datetime.now().isoformat(),
+            "ticks": {}
+        }
 
 
 def create_snapshot_manager(project_root: str, simulation_db_path: str) -> SnapshotManager:

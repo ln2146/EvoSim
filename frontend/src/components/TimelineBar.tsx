@@ -63,7 +63,7 @@ export default function TimelineBar({
         onTickChange(tick)
         onPausedChange(false)
       } else {
-        alert(result.message || '回退失败')
+        alert('回退失败')
       }
     } catch {
       alert('回退请求失败')

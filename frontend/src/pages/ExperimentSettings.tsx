@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
-import { Server, Settings, Play, Square, Database, Users, Shield, Trash2, Save, Bug, Sparkles, Eye } from 'lucide-react'
+import { Server, Settings, Play, Square, Shield, Save, Bug, Sparkles, Eye } from 'lucide-react'
 import axios from 'axios'
-import { setAttackFlag, setAttackMode, setAftercareFlag, setModerationFlag } from '../services/api'
+import { setAttackFlag, setAttackMode, setAftercareFlag, setModerationFlag, saveSnapshot, getSavedSnapshots } from '../services/api'
 import { resolveAttackToggleAction, getAttackModeLabel, type AttackMode } from '../lib/attackModeToggle'
+import SaveSnapshotDialog from '../components/SaveSnapshotDialog'
+import SnapshotSelectDialog from '../components/SnapshotSelectDialog'
 
 interface ServiceStatus {
   database: 'running' | 'stopped'
@@ -29,7 +31,6 @@ export default function ExperimentSettings() {
     platform: 'stopped',
     balance: 'stopped'
   })
-  const [loading, setLoading] = useState<string | null>(null)
   const [condaEnv, setCondaEnv] = useState<string>('')
   const [isEnvSaved, setIsEnvSaved] = useState<boolean>(false)
 
@@ -45,36 +46,13 @@ export default function ExperimentSettings() {
   const [enableModeration, setEnableModeration] = useState(false)
   const [enableEvoCorps, setEnableEvoCorps] = useState(false)
 
+  // 快照对话框状态
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [showSnapshotSelect, setShowSnapshotSelect] = useState(false)
+
   // 配置状态
   const [config, setConfig] = useState<ExperimentConfig | null>(null)
   const [configLoading, setConfigLoading] = useState(false)
-
-  const services = [
-    {
-      id: 'database',
-      name: '数据库服务器',
-      description: '核心数据存储服务，负责用户数据、帖子分享、评论互动等所有数据的持久化存储。这是系统的基础服务，必须最先启动。',
-      icon: Database,
-      color: 'from-blue-500 to-cyan-500',
-      script: 'src/start_database_service.py'
-    },
-    {
-      id: 'platform',
-      name: '社交平台模拟',
-      description: '模拟真实的社交媒体环境，生成用户行为、内容发布、互动评论等。支持多样化场景，包括正常用户行为和极端内容传播。',
-      icon: Users,
-      color: 'from-blue-500 to-green-500',
-      script: 'src/main.py'
-    },
-    {
-      id: 'balance',
-      name: '舆论平衡系统',
-      description: '智能监控平台内容，识别极端言论和极化趋势，自动进行干预平衡。仅在场景4中需要开启，需要配置梯子。使用时需在社交平台启动前开启，不使用时记得关闭。',
-      icon: Shield,
-      color: 'from-orange-500 to-red-500',
-      script: 'src/opinion_balance_launcher.py'
-    }
-  ]
 
   // 从localStorage加载conda环境名称
   useEffect(() => {
@@ -138,55 +116,6 @@ export default function ExperimentSettings() {
     alert('Conda环境名称已清除！')
   }
 
-  const handleStart = async (serviceId: string) => {
-    setLoading(serviceId)
-    try {
-      const payload = condaEnv.trim() ? { conda_env: condaEnv.trim() } : {}
-      await axios.post(`/api/services/${serviceId}/start`, payload)
-      await loadStatus()
-      alert(`服务启动成功！请查看新打开的CMD窗口。`)
-    } catch (error: any) {
-      alert(`启动失败: ${error.response?.data?.error || error.message}`)
-    } finally {
-      setLoading(null)
-    }
-  }
-
-  const handleStop = async (serviceId: string) => {
-    setLoading(serviceId)
-    try {
-      await axios.post(`/api/services/${serviceId}/stop`)
-      await loadStatus()
-      alert(`服务已停止！`)
-    } catch (error: any) {
-      alert(`停止失败: ${error.response?.data?.error || error.message}`)
-    } finally {
-      setLoading(null)
-    }
-  }
-
-  const handleCleanup = async () => {
-    if (!confirm('确定要清理所有服务进程吗？这将强制终止所有正在运行的服务。')) {
-      return
-    }
-    
-    setLoading('cleanup')
-    try {
-      const response = await axios.post('/api/services/cleanup')
-      await loadStatus()
-      const cleaned = response.data.cleaned || []
-      if (cleaned.length > 0) {
-        alert(`清理完成！已终止 ${cleaned.length} 个进程\n${cleaned.join('\n')}`)
-      } else {
-        alert('清理完成！没有发现需要清理的进程。')
-      }
-    } catch (error: any) {
-      alert(`清理失败: ${error.response?.data?.error || error.message}`)
-    } finally {
-      setLoading(null)
-    }
-  }
-
   const handleSaveConfig = async () => {
     if (!config) return
     
@@ -217,7 +146,7 @@ export default function ExperimentSettings() {
   const dbRunning = status.database === 'running'
   const isRunning = dbRunning && platformRunning
 
-  const handleStartDemo = async () => {
+  const handleStartDemo = async (snapshotId?: string, startTick?: number) => {
     if (isRunning || isStarting) return
     setIsStarting(true)
     try {
@@ -234,6 +163,8 @@ export default function ExperimentSettings() {
         body: JSON.stringify({
           enable_attack: enableAttack,
           enable_aftercare: enableAftercare,
+          snapshot_id: snapshotId,
+          start_tick: startTick,
         }),
       })
       const data = await response.json()
@@ -272,9 +203,52 @@ export default function ExperimentSettings() {
     }
   }
 
+  const handleStartClick = async () => {
+    if (isRunning || isStarting) return
+    // 检查是否有已保存的快照
+    try {
+      const snapshots = await getSavedSnapshots()
+      if (snapshots.length > 0) {
+        setShowSnapshotSelect(true)
+      } else {
+        await handleStartDemo()
+      }
+    } catch {
+      await handleStartDemo()
+    }
+  }
+
   const handleStopDemo = async () => {
     if (isStopping) return
-    if (!confirm('是否确认关闭模拟？')) return
+    // 显示保存快照对话框
+    setShowSaveDialog(true)
+  }
+
+  const handleSaveAndStop = async (name: string, description: string) => {
+    setShowSaveDialog(false)
+    setIsStopping(true)
+    try {
+      // 先保存快照
+      await saveSnapshot(name, description)
+      // 然后停止演示
+      const response = await axios.post('/api/dynamic/stop', {}, { timeout: 10000, validateStatus: () => true })
+      if (!response.data.success) {
+        alert(`停止失败：${response.data.message || '未知错误'}`)
+      }
+    } catch (error: any) {
+      const msg = error.message || '网络错误'
+      if (msg.includes('Network Error') || msg.includes('ECONNREFUSED')) {
+        alert('后端服务未响应，已重置前端状态')
+      } else {
+        alert(`停止失败：${msg}`)
+      }
+    } finally {
+      setIsStopping(false)
+    }
+  }
+
+  const handleSkipSave = async () => {
+    setShowSaveDialog(false)
     setIsStopping(true)
     try {
       const response = await axios.post('/api/dynamic/stop', {}, { timeout: 10000, validateStatus: () => true })
@@ -291,6 +265,16 @@ export default function ExperimentSettings() {
     } finally {
       setIsStopping(false)
     }
+  }
+
+  const handleSelectSnapshot = async (snapshotId: string, startTick: number) => {
+    setShowSnapshotSelect(false)
+    await handleStartDemo(snapshotId, startTick)
+  }
+
+  const handleStartFresh = async () => {
+    setShowSnapshotSelect(false)
+    await handleStartDemo()
   }
 
   const handleToggleAttack = async () => {
@@ -611,7 +595,7 @@ export default function ExperimentSettings() {
           <div className="glass-card p-6">
             <div className="flex items-center gap-4">
               <button
-                onClick={handleStartDemo}
+                onClick={handleStartClick}
                 disabled={isRunning || isStarting || isStopping}
                 className="btn-primary inline-flex items-center justify-center gap-2 text-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex-1"
               >
@@ -624,7 +608,7 @@ export default function ExperimentSettings() {
                 className="btn-secondary inline-flex items-center justify-center gap-2 bg-gradient-to-r from-red-500 to-rose-500 text-white border-transparent hover:shadow-xl text-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed flex-1"
               >
                 <Square size={18} />
-                {isStopping ? '停止中...' : '停止演示'}
+                {isStopping ? '结束中...' : '结束演示'}
               </button>
             </div>
           </div>
@@ -679,6 +663,22 @@ export default function ExperimentSettings() {
           onClose={() => setAttackModeDialogOpen(false)}
         />
       )}
+
+      {/* 保存快照对话框 */}
+      <SaveSnapshotDialog
+        open={showSaveDialog}
+        onSave={handleSaveAndStop}
+        onSkip={handleSkipSave}
+        onCancel={() => setShowSaveDialog(false)}
+      />
+
+      {/* 快照选择对话框 */}
+      <SnapshotSelectDialog
+        open={showSnapshotSelect}
+        onSelect={handleSelectSnapshot}
+        onStartFresh={handleStartFresh}
+        onCancel={() => setShowSnapshotSelect(false)}
+      />
     </div>
   )
 }

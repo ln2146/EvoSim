@@ -42,6 +42,14 @@ except ImportError as e:
     print("⚠️ 采访功能将使用简化的模板回答")
     print("💡 提示：请确保已安装所有依赖: pip install -r requirements.txt")
 
+# 导入快照管理器
+try:
+    from snapshot_manager import create_snapshot_manager
+    SNAPSHOT_MANAGER_AVAILABLE = True
+except ImportError as e:
+    SNAPSHOT_MANAGER_AVAILABLE = False
+    print(f"⚠️ 快照管理器加载失败: {e}")
+
 app = Flask(__name__)
 CORS(app)
 
@@ -172,32 +180,40 @@ class ProcessManager:
         return False
     
     def _create_auto_input_script(
-        self, 
-        script_path: str, 
+        self,
+        script_path: str,
         inputs: List[str],
-        conda_env: Optional[str] = None
+        conda_env: Optional[str] = None,
+        env_vars: Optional[Dict[str, str]] = None
     ) -> str:
         """创建自动输入的批处理脚本（内部方法）
-        
+
         Args:
             script_path: 要运行的 Python 脚本路径
             inputs: 输入序列列表
             conda_env: conda 环境名称（已废弃，保留兼容性）
-            
+            env_vars: 环境变量字典（可选）
+
         Returns:
             str: 批处理文件路径
         """
         # 生成唯一的临时批处理文件名（使用绝对路径，避免新终端找不到）
         timestamp = int(time.time())
         bat_file = os.path.join(BASE_DIR, f"temp_input_{timestamp}.bat")
-        
+
         with open(bat_file, 'w', encoding='utf-8') as f:
             # 不需要激活 conda 环境，直接使用当前 Python 解释器
             # 使用 sys.executable 确保使用当前 Python 解释器
-            
+
             # 写入自动输入命令
             f.write('@echo off\n')
             f.write(f'cd /d "{BASE_DIR}"\n')
+
+            # 设置环境变量
+            if env_vars:
+                for key, value in env_vars.items():
+                    f.write(f'set {key}={value}\n')
+
             f.write('(\n')
             for inp in inputs:
                 if inp == '':  # 空字符串表示回车
@@ -210,7 +226,7 @@ class ProcessManager:
             # 注意：移除 exit 命令，让终端在模拟结束后保持打开状态
             # 用户可以手动关闭终端窗口
             # f.write('exit\n')
-        
+
         # 记录临时文件路径用于后续清理
         self.temp_files.append(bat_file)
         return bat_file
@@ -220,7 +236,8 @@ class ProcessManager:
         script_path: str,
         title: str,
         auto_inputs: Optional[List[str]] = None,
-        conda_env: Optional[str] = None
+        conda_env: Optional[str] = None,
+        env_vars: Optional[Dict[str, str]] = None
     ) -> subprocess.Popen:
         """在新终端启动进程（内部方法）
 
@@ -229,23 +246,57 @@ class ProcessManager:
             title: 终端窗口标题
             auto_inputs: 自动输入序列（可选）
             conda_env: conda 环境名称（已废弃，保留兼容性）
+            env_vars: 环境变量字典（可选）
 
         Returns:
             subprocess.Popen: 进程对象
         """
         if auto_inputs:
             # 创建临时批处理文件（包含 exit 命令）
-            bat_file = self._create_auto_input_script(script_path, auto_inputs, conda_env)
+            bat_file = self._create_auto_input_script(script_path, auto_inputs, conda_env, env_vars)
             # 使用 Windows Terminal (wt) 启动，速度更快
             # -w 0: 新窗口, new-tab --title: 标题, --: 后面是要执行的命令
             cmd = f'wt -w 0 new-tab --title "{title}" -- cmd /k "{bat_file}"'
         else:
             # 直接启动，使用当前 Python 解释器
             # 使用 Windows Terminal (wt) 启动，速度更快
-            cmd = f'wt -w 0 new-tab --title "{title}" -- cmd /k "cd /d "{BASE_DIR}" && "{self.python_exe}" {script_path} & pause"'
+            # 如果有环境变量，需要创建批处理文件
+            if env_vars:
+                bat_file = self._create_simple_script(script_path, env_vars)
+                cmd = f'wt -w 0 new-tab --title "{title}" -- cmd /k "{bat_file}"'
+            else:
+                cmd = f'wt -w 0 new-tab --title "{title}" -- cmd /k "cd /d "{BASE_DIR}" && "{self.python_exe}" {script_path} & pause"'
 
         process = subprocess.Popen(cmd, shell=True)
         return process
+
+    def _create_simple_script(
+        self,
+        script_path: str,
+        env_vars: Dict[str, str]
+    ) -> str:
+        """创建简单的批处理脚本（无自动输入，只有环境变量）
+
+        Args:
+            script_path: 要运行的 Python 脚本路径
+            env_vars: 环境变量字典
+
+        Returns:
+            str: 批处理文件路径
+        """
+        timestamp = int(time.time())
+        bat_file = os.path.join(BASE_DIR, f"temp_simple_{timestamp}.bat")
+
+        with open(bat_file, 'w', encoding='utf-8') as f:
+            f.write('@echo off\n')
+            f.write(f'cd /d "{BASE_DIR}"\n')
+            for key, value in env_vars.items():
+                f.write(f'set {key}={value}\n')
+            f.write(f'"{self.python_exe}" {script_path}\n')
+            f.write('pause\n')
+
+        self.temp_files.append(bat_file)
+        return bat_file
     
     def _cleanup_temp_files(self):
         """清理记录的临时文件（内部方法）"""
@@ -281,7 +332,7 @@ class ProcessManager:
             # 清理失败不应影响程序运行
             print(f"清理临时文件时出错: {e}")
     
-    def start_demo(self, conda_env: Optional[str] = None, enable_attack: bool = False, enable_aftercare: bool = False) -> dict:
+    def start_demo(self, conda_env: Optional[str] = None, enable_attack: bool = False, enable_aftercare: bool = False, snapshot_id: Optional[str] = None, start_tick: Optional[int] = None) -> dict:
         """启动演示（数据库 + 主程序）
 
         注意: conda_env 参数已废弃，系统自动使用当前 Python 环境
@@ -295,6 +346,17 @@ class ProcessManager:
             dict: 启动结果
         """
         try:
+            # 如果指定了快照恢复，先恢复数据库
+            if snapshot_id and start_tick and SNAPSHOT_MANAGER_AVAILABLE:
+                snapshot_manager = _get_snapshot_manager()
+                restored_path = snapshot_manager.restore_from_tick(start_tick, snapshot_id)
+                if not restored_path:
+                    return {
+                        'success': False,
+                        'message': f'快照恢复失败: 找不到 session_id={snapshot_id}, tick={start_tick}',
+                        'error': 'SnapshotRestoreFailed'
+                    }
+
             # 快速检查：仅检查已记录的 PID，跳过全系统扫描
             db_running = self._is_process_running_fast('database')
             main_running = self._is_process_running_fast('main')
@@ -357,11 +419,19 @@ class ProcessManager:
                     ''                                # 确认
                 ]
 
+                # 如果从快照恢复，设置起始 tick 环境变量
+                env_vars = {}
+                if start_tick and start_tick > 1:
+                    env_vars['START_TICK'] = str(start_tick)
+                    env_vars['RESET_DB'] = 'false'
+                    print(f"📌 设置起始 tick: {start_tick}")
+
                 self._start_process_in_terminal(
                     script_path=main_script,
                     title='EvoCorps-Main',
                     auto_inputs=auto_inputs,
-                    conda_env=conda_env
+                    conda_env=conda_env,
+                    env_vars=env_vars if env_vars else None
                 )
 
             return {
@@ -402,14 +472,15 @@ class ProcessManager:
         """停止所有进程并关闭终端窗口
 
         先做一次进程扫描补全 PID，然后对每个进程：
-        1. 用 taskkill /F /T /PID 强制结束 Python 进程树
-        2. 找到父 cmd.exe，再用 taskkill /F /T /PID 关闭整个终端窗口
+        1. 查找整个进程树，找到 Windows Terminal (wt.exe) 或 cmd.exe
+        2. 用 taskkill /F /T 关闭整个终端窗口
 
         Returns:
             dict: 停止结果（包含已停止进程列表和错误信息）
         """
         stopped = []
         errors = []
+        killed_terminals = set()  # 记录已关闭的终端，避免重复
 
         # 补全未被记录的 PID（例如手动重启后 self.processes 为 None 的情况）
         found = self._scan_processes_for_keywords()
@@ -421,35 +492,69 @@ class ProcessManager:
             if pid is None:
                 continue
 
-            # 先尝试获取父 cmd.exe PID（必须在 kill 前拿，否则进程消失后拿不到）
-            parent_pid = None
+            # 查找进程树中最高层的终端进程（wt.exe 或 cmd.exe）
+            terminal_pid = None
             try:
                 proc = psutil.Process(pid)
-                parent = proc.parent()
-                if parent and 'cmd' in parent.name().lower():
-                    parent_pid = parent.pid
+                # 向上遍历进程树，找到 Windows Terminal 或 cmd.exe
+                current = proc
+                while current:
+                    parent = current.parent()
+                    if parent:
+                        parent_name = parent.name().lower()
+                        # 找到 Windows Terminal
+                        if 'wt.exe' in parent_name or 'windowsterminal' in parent_name:
+                            terminal_pid = parent.pid
+                            break
+                        # 如果父是 cmd.exe，继续向上找（可能是 wt.exe 启动的）
+                        if 'cmd' in parent_name:
+                            # 检查 cmd 的父进程
+                            grandparent = parent.parent()
+                            if grandparent:
+                                gp_name = grandparent.name().lower()
+                                if 'wt.exe' in gp_name or 'windowsterminal' in gp_name:
+                                    terminal_pid = grandparent.pid
+                                    break
+                            # 如果没有更高的终端，就关闭 cmd.exe
+                            if terminal_pid is None:
+                                terminal_pid = parent.pid
+                            break
+                        current = parent
+                    else:
+                        break
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 pass
 
-            # 1. 用 taskkill /F /T 强制结束 Python 进程及其子进程树
-            try:
-                subprocess.run(
-                    ['taskkill', '/F', '/T', '/PID', str(pid)],
-                    capture_output=True, timeout=10
-                )
-                stopped.append(name)
-            except Exception as e:
-                errors.append(f"{name}: {str(e)}")
-
-            # 2. 结束父 cmd.exe 进程树，关闭终端窗口
-            if parent_pid:
+            # 如果没找到终端，就直接关闭 Python 进程
+            if terminal_pid is None:
                 try:
                     subprocess.run(
-                        ['taskkill', '/F', '/T', '/PID', str(parent_pid)],
-                        capture_output=True, timeout=5
+                        ['taskkill', '/F', '/T', '/PID', str(pid)],
+                        capture_output=True, timeout=10
                     )
-                except Exception:
-                    pass  # 父进程可能已随 Python 退出而自动关闭
+                    stopped.append(name)
+                except Exception as e:
+                    errors.append(f"{name}: {str(e)}")
+            else:
+                # 关闭整个终端窗口（会连带关闭其中的所有进程）
+                if terminal_pid not in killed_terminals:
+                    try:
+                        subprocess.run(
+                            ['taskkill', '/F', '/T', '/PID', str(terminal_pid)],
+                            capture_output=True, timeout=10
+                        )
+                        killed_terminals.add(terminal_pid)
+                        stopped.append(name)
+                    except Exception as e:
+                        errors.append(f"{name}: {str(e)}")
+                        # 如果关闭终端失败，尝试直接关闭 Python 进程
+                        try:
+                            subprocess.run(
+                                ['taskkill', '/F', '/T', '/PID', str(pid)],
+                                capture_output=True, timeout=10
+                            )
+                        except Exception:
+                            pass
 
         # 清理临时文件
         self._cleanup_temp_files()
@@ -3157,13 +3262,15 @@ def stream_opinion_balance_logs():
 def start_dynamic_demo():
     """启动动态演示系统（数据库 + 主程序）
 
-    自动使用当前 Python 环境（frontend_api.py 运行的环境）
+    自动使用当前 Python 环境（frontend_api.py 运行的环境)
 
     请求体:
         {
             "conda_env": "环境名称",      // 可选，已废弃，保留兼容性
             "enable_attack": true/false,  // 可选，是否启用恶意攻击
-            "enable_aftercare": true/false // 可选，是否启用事后干预
+            "enable_aftercare": true/false, // 可选，是否启用事后干预
+            "snapshot_id": "20260307_123456", // 可选，从指定快照恢复
+            "start_tick": 50              // 可选，从指定 tick 开始（需要 snapshot_id）
         }
 
     响应:
@@ -3182,17 +3289,38 @@ def start_dynamic_demo():
         conda_env = data.get('conda_env')  # 保留兼容性，但不使用
         enable_attack = data.get('enable_attack', False)
         enable_aftercare = data.get('enable_aftercare', False)
+        snapshot_id = data.get('snapshot_id')  # 新增：快照 ID
+        start_tick = data.get('start_tick')  # 新增：起始 tick
 
-        # 调用 process_manager.start_demo()，传递预置标志
+        # 如果指定了快照恢复，先恢复数据库
+        if snapshot_id and start_tick:
+            if not SNAPSHOT_MANAGER_AVAILABLE:
+                return jsonify({
+                    'success': False,
+                    'message': '快照管理器不可用，无法从快照恢复'
+                }), 500
+
+            snapshot_manager = _get_snapshot_manager()
+            restored_path = snapshot_manager.restore_from_tick(start_tick, snapshot_id)
+
+            if not restored_path:
+                return jsonify({
+                    'success': False,
+                    'message': f'从快照 {snapshot_id} 的 tick {start_tick} 恢复失败'
+                }), 500
+
+        # 调用 process_manager.start_demo()，传递预置标志和恢复参数
         result = process_manager.start_demo(
             conda_env=conda_env,
             enable_attack=enable_attack,
-            enable_aftercare=enable_aftercare
+            enable_aftercare=enable_aftercare,
+            snapshot_id=snapshot_id,
+            start_tick=start_tick
         )
-        
+
         # 返回 JSON 响应
         return jsonify(result)
-        
+
     except Exception as e:
         # 处理异常并返回错误响应
         import traceback
@@ -4620,6 +4748,138 @@ def get_echo_chamber_users():
             'count': len(echo_users),
             'echo_chamber_count': report['num_echo_chambers']
         })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+# ==================== 快照管理 API ====================
+
+def _get_snapshot_manager():
+    """获取快照管理器实例"""
+    if not SNAPSHOT_MANAGER_AVAILABLE:
+        return None
+    db_path = os.path.join(BASE_DIR, 'database', 'simulation.db')
+    return create_snapshot_manager(BASE_DIR, db_path)
+
+
+@app.route('/api/snapshots/save', methods=['POST'])
+def save_snapshot():
+    """保存当前数据库为命名快照
+
+    请求体:
+        {
+            "name": "快照名称",
+            "description": "快照描述"  // 可选
+        }
+
+    响应:
+        {
+            "success": true/false,
+            "snapshot_id": "20260307_123456",
+            "message": "消息"
+        }
+    """
+    try:
+        if not SNAPSHOT_MANAGER_AVAILABLE:
+            return jsonify({
+                'success': False,
+                'message': '快照管理器不可用'
+            }), 500
+
+        data = request.get_json() or {}
+        name = data.get('name', '').strip()
+        description = data.get('description', '').strip()
+
+        if not name:
+            return jsonify({
+                'success': False,
+                'message': '快照名称不能为空'
+            }), 400
+
+        snapshot_manager = _get_snapshot_manager()
+        result = snapshot_manager.save_named_snapshot(name, description)
+
+        return jsonify(result)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': f'保存快照失败: {str(e)}'
+        }), 500
+
+
+@app.route('/api/snapshots/saved', methods=['GET'])
+def get_saved_snapshots():
+    """获取已保存的快照列表（含详细预览）
+
+    响应:
+        {
+            "snapshots": [{
+                "id": "20260307_123456",
+                "name": "实验1",
+                "description": "描述",
+                "created_at": "2026-03-07T12:34:56",
+                "saved_at": "2026-03-07T14:00:00",
+                "tick_count": 50,
+                "total_users": 100,
+                "total_posts": 234,
+                "total_comments": 567,
+                "ticks": [...]
+            }]
+        }
+    """
+    try:
+        if not SNAPSHOT_MANAGER_AVAILABLE:
+            return jsonify({'snapshots': []})
+
+        snapshot_manager = _get_snapshot_manager()
+        snapshots = snapshot_manager.list_saved_snapshots()
+
+        return jsonify({'snapshots': snapshots})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'snapshots': [], 'error': str(e)})
+
+
+@app.route('/api/snapshots/<session_id>', methods=['GET'])
+def get_snapshot_detail(session_id):
+    """获取单个快照的详细信息
+
+    响应:
+        {
+            "id": "20260307_123456",
+            "name": "实验1",
+            "description": "描述",
+            "created_at": "2026-03-07T12:34:56",
+            "saved_at": "2026-03-07T14:00:00",
+            "tick_count": 50,
+            "total_users": 100,
+            "total_posts": 234,
+            "total_comments": 567,
+            "ticks": [
+                {"tick": 1, "timestamp": "...", "user_count": 100, "post_count": 5},
+                ...
+            ]
+        }
+    """
+    try:
+        if not SNAPSHOT_MANAGER_AVAILABLE:
+            return jsonify({'error': '快照管理器不可用'}), 500
+
+        snapshot_manager = _get_snapshot_manager()
+        detail = snapshot_manager.get_saved_snapshot_detail(session_id)
+
+        if not detail:
+            return jsonify({'error': '快照不存在或未命名'}), 404
+
+        return jsonify(detail)
+
     except Exception as e:
         import traceback
         traceback.print_exc()

@@ -770,12 +770,23 @@ def check_database_service():
 if __name__ == "__main__":
     # Set comprehensive logging configuration affecting all logging calls
     log_file = setup_comprehensive_logging()
-    
+
+    # 读取环境变量（用于从快照恢复）
+    start_tick_env = os.environ.get('START_TICK', '')
+    reset_db_env = os.environ.get('RESET_DB', 'true')
+
+    start_tick = int(start_tick_env) if start_tick_env.isdigit() else 1
+    reset_db = reset_db_env.lower() != 'false'
+
+    if start_tick > 1:
+        print(f"📌 从快照恢复: 起始 tick = {start_tick}")
+        print(f"📌 数据库重置: {'是' if reset_db else '否'}")
+
     # Start the FastAPI control server in the background so that
     # external tools / frontend can toggle runtime flags while the
     # simulation is running.
     start_control_api_server()
-    
+
     # Check database service
     print("🔍 Checking database service status...")
     if not check_database_service():
@@ -803,21 +814,25 @@ if __name__ == "__main__":
 
     apply_selector_engine(config)
 
-    # Reset simulation database before each run
+    # Reset simulation database before each run (unless restoring from snapshot)
     from database_manager import DatabaseManager
     db_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'database', 'simulation.db')
-    reset_manager = DatabaseManager(db_path, reset_db=True)
-    reset_manager.close()
+    if reset_db:
+        reset_manager = DatabaseManager(db_path, reset_db=True)
+        reset_manager.close()
+    else:
+        print("📌 跳过数据库重置（从快照恢复）")
 
-    # 清理所有旧快照（main.py启动时清理）
-    try:
-        from snapshot_manager import create_snapshot_manager
-        project_root = os.path.dirname(os.path.dirname(__file__))
-        snapshot_mgr = create_snapshot_manager(project_root, db_path)
-        snapshot_mgr.cleanup_all_snapshots()
-        print("🗑️  已清理所有旧快照数据")
-    except Exception as e:
-        print(f"⚠️  清理快照失败: {e}")
+    # 清理所有旧快照（仅在非快照恢复模式下清理）
+    if reset_db:
+        try:
+            from snapshot_manager import create_snapshot_manager
+            project_root = os.path.dirname(os.path.dirname(__file__))
+            snapshot_mgr = create_snapshot_manager(project_root, db_path)
+            snapshot_mgr.cleanup_all_snapshots()
+            print("🗑️  已清理所有旧快照数据")
+        except Exception as e:
+            print(f"⚠️  清理快照失败: {e}")
 
     # Show persona configuration info
     print_persona_config_info(config)
@@ -1144,11 +1159,14 @@ if __name__ == "__main__":
 
     # Create and run the simulation
     sim = Simulation(config)
-    
-    # Run the simulation
-    print("\n🎬 Starting simulation...")
+
+    # Run the simulation (从 start_tick 开始)
+    if start_tick > 1:
+        print(f"\n🎬 Starting simulation from tick {start_tick}...")
+    else:
+        print("\n🎬 Starting simulation...")
     import asyncio
-    asyncio.run(sim.run(config['num_time_steps']))
+    asyncio.run(sim.run(config['num_time_steps'], start_tick=start_tick))
 
     # Show final results
     print("\n✅ Simulation completed!")

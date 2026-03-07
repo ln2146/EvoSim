@@ -26,8 +26,10 @@ import { useLeaderboard } from '../hooks/useLeaderboard'
 import { usePostDetail } from '../hooks/usePostDetail'
 import { usePostComments } from '../hooks/usePostComments'
 import { usePostAnalysis } from '../hooks/usePostAnalysis'
-import { setAttackMode, setModerationFlag, setAttackFlag, setAftercareFlag, detectFactions, getPostFactions, type FactionReport, type PostFactionsSummary } from '../services/api'
+import { setAttackMode, setModerationFlag, setAttackFlag, setAftercareFlag, detectFactions, getPostFactions, getSavedSnapshots, type FactionReport, type PostFactionsSummary } from '../services/api'
 import { getAttackModeLabel, resolveAttackToggleAction, type AttackMode } from '../lib/attackModeToggle'
+import SaveSnapshotDialog from '../components/SaveSnapshotDialog'
+import SnapshotSelectDialog from '../components/SnapshotSelectDialog'
 
 const DEMO_BACKEND_LOG_LINES: string[] = [
   '2026-01-28 21:13:09,286 - INFO - 📊 Phase 1: perception and decision',
@@ -369,6 +371,8 @@ export default function DynamicDemo() {
 
   const [isStarting, setIsStarting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [showSnapshotSelect, setShowSnapshotSelect] = useState(false)
   const [isTogglingAttack, setIsTogglingAttack] = useState(false)
   const [isTogglingAftercare, setIsTogglingAftercare] = useState(false)
   const [isTogglingModeration, setIsTogglingModeration] = useState(false)
@@ -584,152 +588,123 @@ export default function DynamicDemo() {
     } : null
   }, [postAnalysis.isTracking, postAnalysis.trackedPostId, data.heatPosts])
 
+  // 启动演示的核心函数
+  const handleStartDemo = async (snapshotId?: string, startTick?: number) => {
+    // 设置加载状态
+    setIsStarting(true)
+
+    try {
+      // 启动前将内容审核开关写入配置文件，确保 main.py 读到正确的初始值
+      await fetch('/api/config/moderation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content_moderation: enableModeration }),
+      }).catch(() => {})
+
+      // 调用后端 API 启动进程，传递预置标志和快照信息
+      const response = await fetch('/api/dynamic/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          enable_attack: enableAttack,
+          enable_aftercare: enableAftercare,
+          snapshot_id: snapshotId,
+          start_tick: startTick,
+        }),
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        // 捕获用户预置的标志（在 setIsRunning 前快照，避免轮询覆盖）
+        const preAttack = enableAttack
+        const preAttackMode = attackMode
+        const preAftercare = enableAftercare
+        const preModeration = enableModeration
+        const preEvoCorps = enableEvoCorps
+
+        // 成功：设置 isRunning 状态，连接 SSE
+        setIsRunning(true)
+        sse.connect()
+        setFlowState(createInitialFlowState())
+
+        // 重置所有状态到初始默认状态
+        // 1. 停止并清除帖子分析追踪
+        postAnalysis.stopTracking()
+
+        // 2. 清除选中的帖子
+        setSelectedPost(null)
+
+        // 3. 刷新热度榜数据
+        await refetchLeaderboard()
+
+        // 4. 延迟同步预置标志到后端（等待控制服务器完全启动）
+        setTimeout(async () => {
+          const syncs: Array<Promise<unknown>> = []
+          if (preAttack) {
+            if (preAttackMode) {
+              syncs.push(setAttackMode(preAttackMode).catch(() => {}))
+            }
+            syncs.push(setAttackFlag(true).catch(() => {}))
+          }
+          if (!preAftercare) {
+            syncs.push(setAftercareFlag(false).catch(() => {}))
+          }
+          if (preModeration) {
+            syncs.push(setModerationFlag(true).catch(() => {}))
+          }
+          await Promise.allSettled(syncs)
+          if (preEvoCorps) {
+            await fetch('/api/dynamic/opinion-balance/start', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({}),
+            }).catch(() => {})
+          }
+        }, 3000)
+      } else {
+        // 失败：显示错误消息
+        alert(`启动失败：${data.message || '未知错误'}`)
+        console.error('Failed to start dynamic demo:', data)
+      }
+    } catch (error) {
+      // 网络错误或其他异常
+      alert(`启动失败：${error instanceof Error ? error.message : '网络错误'}`)
+      console.error('Error starting dynamic demo:', error)
+    } finally {
+      // 清除加载状态
+      setIsStarting(false)
+    }
+  }
+
+  // 点击开始按钮时，检查是否有已保存的快照
+  const handleStartClick = async () => {
+    if (isRunning || isStarting) return
+    try {
+      const snapshots = await getSavedSnapshots()
+      if (snapshots.length > 0) {
+        setShowSnapshotSelect(true)
+      } else {
+        await handleStartDemo()
+      }
+    } catch {
+      await handleStartDemo()
+    }
+  }
+
   return (
     <DynamicDemoPage>
       <DynamicDemoHeader
         isRunning={isRunning}
         isStarting={isStarting}
         isStopping={isStopping}
-        onStart={async () => {
-          // 设置加载状态
-          setIsStarting(true)
-
-          try {
-            // 启动前将内容审核开关写入配置文件，确保 main.py 读到正确的初始值
-            await fetch('/api/config/moderation', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ content_moderation: enableModeration }),
-            }).catch(() => {})
-
-            // 调用后端 API 启动进程，传递预置标志
-            const response = await fetch('/api/dynamic/start', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                enable_attack: enableAttack,
-                enable_aftercare: enableAftercare,
-              }),
-            })
-
-            const data = await response.json()
-
-            if (data.success) {
-              // 捕获用户预置的标志（在 setIsRunning 前快照，避免轮询覆盖）
-              const preAttack = enableAttack
-              const preAttackMode = attackMode
-              const preAftercare = enableAftercare
-              const preModeration = enableModeration
-              const preEvoCorps = enableEvoCorps
-
-              // 成功：设置 isRunning 状态，连接 SSE
-              setIsRunning(true)
-              sse.connect()
-              setFlowState(createInitialFlowState())
-
-              // 重置所有状态到初始默认状态
-              // 1. 停止并清除帖子分析追踪
-              postAnalysis.stopTracking()
-
-              // 2. 清除选中的帖子
-              setSelectedPost(null)
-
-              // 3. 刷新热度榜数据
-              await refetchLeaderboard()
-
-              // 4. 延迟同步预置标志到后端（等待控制服务器完全启动）
-              setTimeout(async () => {
-                const syncs: Array<Promise<unknown>> = []
-                if (preAttack) {
-                  if (preAttackMode) {
-                    syncs.push(setAttackMode(preAttackMode).catch(() => {}))
-                  }
-                  syncs.push(setAttackFlag(true).catch(() => {}))
-                }
-                if (!preAftercare) {
-                  syncs.push(setAftercareFlag(false).catch(() => {}))
-                }
-                if (preModeration) {
-                  syncs.push(setModerationFlag(true).catch(() => {}))
-                }
-                await Promise.allSettled(syncs)
-                if (preEvoCorps) {
-                  await fetch('/api/dynamic/opinion-balance/start', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({}),
-                  }).catch(() => {})
-                }
-              }, 3000)
-            } else {
-              // 失败：显示错误消息
-              alert(`启动失败：${data.message || '未知错误'}`)
-              console.error('Failed to start dynamic demo:', data)
-            }
-          } catch (error) {
-            // 网络错误或其他异常
-            alert(`启动失败：${error instanceof Error ? error.message : '网络错误'}`)
-            console.error('Error starting dynamic demo:', error)
-          } finally {
-            // 清除加载状态
-            setIsStarting(false)
-          }
-        }}
-        onStop={async () => {
+        onStart={handleStartClick}
+        onStop={() => {
           // 防止重复点击
           if (isStopping) return
-
-          // 显示确认对话框
-          if (!confirm('是否确认关闭模拟？')) {
-            return
-          }
-
-          setIsStopping(true)
-
-          try {
-            // 使用 axios 发送请求，通过 vite 代理
-            const axios = (await import('axios')).default
-            const response = await axios.post('/api/dynamic/stop', {}, {
-              timeout: 10000, // 10秒超时
-              validateStatus: () => true, // 不抛出HTTP错误
-            })
-
-            const data = response.data
-
-            if (data.success) {
-              // 成功：设置 isRunning 为 false，断开 SSE
-              setIsRunning(false)
-              sse.disconnect()
-
-              // 暂停帖子分析追踪（保留最后的分析结果）
-              postAnalysis.pauseTracking()
-
-              // 等待 3 秒确保进程完全停止和文件锁释放
-              await new Promise(resolve => setTimeout(resolve, 3000))
-            } else {
-              // 失败：显示错误消息
-              alert(`停止失败：${data.message || '未知错误'}`)
-              console.error('Failed to stop dynamic demo:', data)
-            }
-          } catch (error) {
-            // 网络错误或其他异常
-            const errorMsg = error instanceof Error ? error.message : '网络错误'
-
-            // 如果是网络错误，可能是后端服务未运行，直接重置状态
-            if (errorMsg.includes('Network Error') || errorMsg.includes('ECONNREFUSED')) {
-              console.warn('Backend service not available, resetting UI state')
-              setIsRunning(false)
-              sse.disconnect()
-              postAnalysis.pauseTracking()
-              alert('后端服务未响应，已重置前端状态')
-            } else {
-              alert(`停止失败：${errorMsg}`)
-              console.error('Error stopping dynamic demo:', error)
-            }
-          } finally {
-            setIsStopping(false)
-          }
+          // 显示保存快照对话框
+          setShowSaveDialog(true)
         }}
         onBack={(path) => navigate(path || '/')}
         enableAttack={enableAttack}
@@ -815,7 +790,7 @@ export default function DynamicDemo() {
           try {
             const data = await setAttackFlag(newEnabled)
 
-            if (response.ok && data.attack_enabled !== undefined) {
+            if (data && data.attack_enabled !== undefined) {
               // 以服务器返回值为准
               setEnableAttack(data.attack_enabled)
               if (!data.attack_enabled) {
@@ -1097,6 +1072,96 @@ export default function DynamicDemo() {
         interval={postAnalysis.interval}
         onSave={(newInterval) => postAnalysis.setInterval(newInterval)}
       />
+
+      <SaveSnapshotDialog
+        open={showSaveDialog}
+        onSave={async (name, description) => {
+          setShowSaveDialog(false)
+          setIsStopping(true)
+          try {
+            // 保存快照
+            const saveResponse = await fetch('/api/snapshots/save', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name, description }),
+            })
+            const saveData = await saveResponse.json()
+
+            if (!saveData.success) {
+              alert(`保存快照失败：${saveData.message || '未知错误'}`)
+              return
+            }
+
+            // 停止演示
+            const stopResponse = await fetch('/api/dynamic/stop', { method: 'POST' })
+            const stopData = await stopResponse.json()
+
+            if (stopData.success) {
+              setIsRunning(false)
+              sse.disconnect()
+              postAnalysis.pauseTracking()
+              await new Promise(resolve => setTimeout(resolve, 1000))
+            } else {
+              alert(`停止失败：${stopData.message || '未知错误'}`)
+            }
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : '网络错误'
+            if (errorMsg.includes('Network Error') || errorMsg.includes('ECONNREFUSED')) {
+              setIsRunning(false)
+              sse.disconnect()
+              postAnalysis.pauseTracking()
+              alert('后端服务未响应，已重置前端状态')
+            } else {
+              alert(`操作失败：${errorMsg}`)
+            }
+          } finally {
+            setIsStopping(false)
+          }
+        }}
+        onSkip={async () => {
+          setShowSaveDialog(false)
+          setIsStopping(true)
+          try {
+            const response = await fetch('/api/dynamic/stop', { method: 'POST' })
+            const data = await response.json()
+
+            if (data.success) {
+              setIsRunning(false)
+              sse.disconnect()
+              postAnalysis.pauseTracking()
+              await new Promise(resolve => setTimeout(resolve, 1000))
+            } else {
+              alert(`停止失败：${data.message || '未知错误'}`)
+            }
+          } catch (error) {
+            const errorMsg = error instanceof Error ? error.message : '网络错误'
+            if (errorMsg.includes('Network Error') || errorMsg.includes('ECONNREFUSED')) {
+              setIsRunning(false)
+              sse.disconnect()
+              postAnalysis.pauseTracking()
+              alert('后端服务未响应，已重置前端状态')
+            } else {
+              alert(`停止失败：${errorMsg}`)
+            }
+          } finally {
+            setIsStopping(false)
+          }
+        }}
+        onCancel={() => setShowSaveDialog(false)}
+      />
+
+      <SnapshotSelectDialog
+        open={showSnapshotSelect}
+        onSelect={async (snapshotId, startTick) => {
+          setShowSnapshotSelect(false)
+          await handleStartDemo(snapshotId, startTick)
+        }}
+        onStartFresh={async () => {
+          setShowSnapshotSelect(false)
+          await handleStartDemo()
+        }}
+        onCancel={() => setShowSnapshotSelect(false)}
+      />
     </DynamicDemoPage>
   )
 }
@@ -1119,7 +1184,7 @@ function DynamicDemoHeader({
   onStop,
   onBack,
   enableAttack,
-  attackMode,
+  attackMode: _attackMode,
   attackModeDialogOpen,
   enableAftercare,
   enableEvoCorps,
@@ -1179,7 +1244,7 @@ function DynamicDemoHeader({
               disabled={isStopping}
             >
               <Square size={18} />
-              {isStopping ? '停止中...' : '停止演示'}
+              {isStopping ? '结束中...' : '结束演示'}
             </button>
           </div>
           <div className="flex flex-wrap gap-3 justify-center">
@@ -1634,13 +1699,10 @@ function DefenseDashboardCard({ dashboard, isLive, isFetching }: { dashboard: De
 
   const tc = dashboard?.traffic_concentration
   const extremeCount = tc?.extreme_account_count ?? 0
-  const extremeShare = tc?.extreme_account_share ?? 0
-  const totalAccounts = tc?.total_accounts ?? 0
   const gini = dashboard?.algorithmic_bias.overall_gini ?? 0
   const giniBarColor = gini < 0.3 ? 'bg-green-500' : gini < 0.6 ? 'bg-amber-500' : 'bg-red-500'
   const giniLabel = gini < 0.3 ? '流量分布正常' : gini < 0.6 ? '流量轻度集中' : '⚠ 流量过度集中'
   const giniLabelColor = gini < 0.3 ? 'text-green-600' : gini < 0.6 ? 'text-amber-600' : 'text-red-600'
-  const concentrated = extremeCount > 0 && extremeShare > 50  // for extreme account line
 
   return (
     <div className="glass-card p-6 h-[300px] flex flex-col">
