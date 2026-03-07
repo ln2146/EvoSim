@@ -1,6 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Server, Settings, Play, Square, Database, Users, Shield, Trash2, Save } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Server, Settings, Play, Square, Database, Users, Shield, Trash2, Save, Bug, Sparkles, Eye } from 'lucide-react'
 import axios from 'axios'
+import { setAttackFlag, setAttackMode, setAftercareFlag, setModerationFlag } from '../services/api'
+import { resolveAttackToggleAction, getAttackModeLabel, type AttackMode } from '../lib/attackModeToggle'
 
 interface ServiceStatus {
   database: 'running' | 'stopped'
@@ -29,6 +32,14 @@ export default function ExperimentSettings() {
   const [loading, setLoading] = useState<string | null>(null)
   const [condaEnv, setCondaEnv] = useState<string>('')
   const [isEnvSaved, setIsEnvSaved] = useState<boolean>(false)
+
+  // 控制开关状态
+  const [enableAttack, setEnableAttack] = useState(false)
+  const [attackMode, setAttackModeState] = useState<AttackMode | null>(null)
+  const [attackModeDialogOpen, setAttackModeDialogOpen] = useState(false)
+  const [enableAftercare, setEnableAftercare] = useState(false)
+  const [enableModeration, setEnableModeration] = useState(false)
+  const [enableEvoCorps, setEnableEvoCorps] = useState(false)
 
   // 配置状态
   const [config, setConfig] = useState<ExperimentConfig | null>(null)
@@ -197,6 +208,94 @@ export default function ExperimentSettings() {
     if (!config) return
     setConfig({ ...config, [key]: value })
   }
+
+  const platformRunning = status.platform === 'running'
+
+  const handleToggleAttack = async () => {
+    const next = !enableAttack
+    setEnableAttack(next)
+    if (!platformRunning) return
+    try {
+      if (next) await setAttackMode('swarm')
+      const data = await setAttackFlag(next)
+      setEnableAttack(data.attack_enabled)
+    } catch {
+      setEnableAttack(!next)
+    }
+  }
+
+  const handleToggleAftercare = async () => {
+    const next = !enableAftercare
+    setEnableAftercare(next)
+    if (!platformRunning) return
+    try {
+      const data = await setAftercareFlag(next)
+      setEnableAftercare(data.aftercare_enabled)
+    } catch {
+      setEnableAftercare(!next)
+    }
+  }
+
+  const handleToggleModeration = async () => {
+    const next = !enableModeration
+    setEnableModeration(next)
+    if (!platformRunning) {
+      fetch('/api/config/moderation', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content_moderation: next }),
+      }).catch(() => {})
+      return
+    }
+    try {
+      const data = await setModerationFlag(next)
+      setEnableModeration(data.moderation_enabled)
+    } catch {
+      setEnableModeration(!next)
+    }
+  }
+
+  const handleToggleEvoCorps = () => {
+    setEnableEvoCorps(!enableEvoCorps)
+  }
+
+  const toggles = [
+    {
+      id: 'attack',
+      name: '恶意攻击',
+      description: '开启后将模拟恶意水军的协同攻击行为，包括蜂群式、分散式、链式三种攻击模式。默认使用蜂群式模式。',
+      icon: Bug,
+      color: 'from-red-500 to-orange-500',
+      enabled: enableAttack,
+      onToggle: handleToggleAttack,
+    },
+    {
+      id: 'aftercare',
+      name: '事后干预',
+      description: '开启后系统将在攻击行为发生后进行智能干预，降低恶意内容的传播影响。',
+      icon: Sparkles,
+      color: 'from-purple-500 to-pink-500',
+      enabled: enableAftercare,
+      onToggle: handleToggleAftercare,
+    },
+    {
+      id: 'moderation',
+      name: '内容审核',
+      description: '开启后系统将对平台内容进行实时审核，识别并标记违规内容。',
+      icon: Eye,
+      color: 'from-indigo-500 to-blue-500',
+      enabled: enableModeration,
+      onToggle: handleToggleModeration,
+    },
+    {
+      id: 'evocorps',
+      name: '舆论平衡',
+      description: '智能监控平台舆论走向，识别极端言论和极化趋势，自动进行干预平衡。仅在场景4中需要，需要配置梯子。',
+      icon: Shield,
+      color: 'from-orange-500 to-red-500',
+      enabled: enableEvoCorps,
+      onToggle: handleToggleEvoCorps,
+    },
+  ]
 
   return (
     <div className="space-y-6">
@@ -390,65 +489,41 @@ export default function ExperimentSettings() {
             </div>
           </div>
 
-          {/* 服务列表 */}
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold text-slate-800">服务列表</h2>
-            <button
-              onClick={handleCleanup}
-              disabled={loading === 'cleanup'}
-              className="px-6 py-3 bg-gradient-to-r from-red-500 to-rose-500 text-white rounded-xl font-medium shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Trash2 size={18} />
-              {loading === 'cleanup' ? '清理中...' : '清理所有服务'}
-            </button>
-          </div>
-
+          {/* 功能开关列表 */}
           <div className="grid gap-6">
-            {services.map((service) => {
-              const Icon = service.icon
-              const isRunning = status[service.id as keyof ServiceStatus] === 'running'
-              const isLoading = loading === service.id
-
+            {toggles.map((toggle) => {
+              const Icon = toggle.icon
               return (
-                <div key={service.id} className="glass-card p-6">
+                <div key={toggle.id} className="glass-card p-6">
                   <div className="flex items-start gap-4">
-                    <div className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${service.color} flex items-center justify-center shadow-lg flex-shrink-0`}>
+                    <div className={`w-16 h-16 rounded-2xl bg-gradient-to-br ${toggle.color} flex items-center justify-center shadow-lg flex-shrink-0`}>
                       <Icon size={32} className="text-white" />
                     </div>
 
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
-                        <h3 className="text-xl font-bold text-slate-800">{service.name}</h3>
+                        <h3 className="text-xl font-bold text-slate-800">{toggle.name}</h3>
                         <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                          isRunning 
-                            ? 'bg-green-100 text-green-700' 
+                          toggle.enabled
+                            ? 'bg-green-100 text-green-700'
                             : 'bg-slate-100 text-slate-600'
                         }`}>
-                          {isRunning ? '运行中' : '已停止'}
+                          {toggle.enabled ? '已开启' : '已关闭'}
                         </span>
                       </div>
-                      <p className="text-slate-600 leading-relaxed mb-3">{service.description}</p>
-                      <p className="text-xs text-slate-500 font-mono bg-slate-50 px-2 py-1 rounded inline-block">
-                        {service.script}
-                      </p>
+                      <p className="text-slate-600 leading-relaxed mb-3">{toggle.description}</p>
+                      {!platformRunning && (
+                        <p className="text-xs text-slate-500">服务未运行时，开关状态将在启动后自动同步到后端</p>
+                      )}
                     </div>
 
                     <div className="flex flex-col gap-2">
                       <button
-                        onClick={() => handleStart(service.id)}
-                        disabled={isLoading || isRunning}
-                        className="px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-medium shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        onClick={toggle.onToggle}
+                        className={`btn-primary inline-flex items-center justify-center gap-2 text-lg font-medium ${toggle.enabled ? '!bg-gradient-to-r !from-red-500 !to-rose-500' : ''}`}
                       >
-                        <Play size={18} />
-                        {isLoading && !isRunning ? '启动中...' : '启动服务'}
-                      </button>
-                      <button
-                        onClick={() => handleStop(service.id)}
-                        disabled={isLoading || !isRunning}
-                        className="px-6 py-3 bg-gradient-to-r from-red-500 to-rose-500 text-white rounded-xl font-medium shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-105 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        <Square size={18} />
-                        {isLoading && isRunning ? '停止中...' : '停止服务'}
+                        {toggle.enabled ? <Square size={18} /> : <Play size={18} />}
+                        {toggle.enabled ? '关闭' : '开启'}
                       </button>
                     </div>
                   </div>
@@ -475,3 +550,4 @@ export default function ExperimentSettings() {
     </div>
   )
 }
+
