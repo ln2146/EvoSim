@@ -212,15 +212,51 @@ export default function ExperimentSettings() {
   const platformRunning = status.platform === 'running'
 
   const handleToggleAttack = async () => {
-    const next = !enableAttack
-    setEnableAttack(next)
-    if (!platformRunning) return
+    const action = resolveAttackToggleAction({
+      enabled: enableAttack,
+      selectedMode: attackMode,
+    })
+
+    if (action.type === 'open_mode_dialog' || action.type === 'enable') {
+      setAttackModeDialogOpen(true)
+      return
+    }
+
+    // disable
+    if (!confirm('是否确认关闭恶意攻击模式？')) return
+
+    if (!platformRunning) {
+      setEnableAttack(false)
+      setAttackModeState(null)
+      return
+    }
+
+    setEnableAttack(false)
     try {
-      if (next) await setAttackMode('swarm')
-      const data = await setAttackFlag(next)
+      const data = await setAttackFlag(false)
       setEnableAttack(data.attack_enabled)
+      if (!data.attack_enabled) setAttackModeState(null)
     } catch {
-      setEnableAttack(!next)
+      setEnableAttack(true)
+    }
+  }
+
+  const handleSelectAttackMode = async (mode: AttackMode) => {
+    setAttackModeState(mode)
+    setAttackModeDialogOpen(false)
+
+    if (!platformRunning) {
+      setEnableAttack(true)
+      return
+    }
+
+    setEnableAttack(true)
+    try {
+      await setAttackMode(mode)
+      const data = await setAttackFlag(true)
+      setEnableAttack(Boolean(data.attack_enabled))
+    } catch {
+      setEnableAttack(false)
     }
   }
 
@@ -262,7 +298,7 @@ export default function ExperimentSettings() {
     {
       id: 'attack',
       name: '恶意攻击',
-      description: '开启后将模拟恶意水军的协同攻击行为，包括蜂群式、分散式、链式三种攻击模式。默认使用蜂群式模式。',
+      description: `开启后将模拟恶意水军的协同攻击行为，包括蜂群式、分散式、链式三种攻击模式。${attackMode ? `当前模式：${getAttackModeLabel(attackMode)}` : ''}`,
       icon: Bug,
       color: 'from-red-500 to-orange-500',
       enabled: enableAttack,
@@ -365,7 +401,7 @@ export default function ExperimentSettings() {
                 <div className="grid grid-cols-3 gap-6">
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-2">
-                      用户数量
+                      普通用户数量
                     </label>
                     <input
                       type="number"
@@ -374,7 +410,7 @@ export default function ExperimentSettings() {
                       className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-purple-500"
                       min="1"
                     />
-                    <p className="text-xs text-slate-500 mt-1">模拟的用户总数</p>
+                    <p className="text-xs text-slate-500 mt-1">模拟的普通用户总数</p>
                   </div>
 
                   <div>
@@ -427,7 +463,7 @@ export default function ExperimentSettings() {
                 <div className="space-y-2 text-sm text-slate-700">
                   <p>• 修改配置后需要点击"保存配置"按钮才会生效</p>
                   <p>• 配置保存后需要重启服务才能应用新配置</p>
-                  <p>• 用户数量和时间步数会直接影响实验运行时间</p>
+                  <p>• 普通用户数量和时间步数会直接影响实验运行时间</p>
                   <p>• Temperature值越高，AI生成的内容越随机和多样化</p>
                 </div>
               </div>
@@ -512,9 +548,6 @@ export default function ExperimentSettings() {
                         </span>
                       </div>
                       <p className="text-slate-600 leading-relaxed mb-3">{toggle.description}</p>
-                      {!platformRunning && (
-                        <p className="text-xs text-slate-500">服务未运行时，开关状态将在启动后自动同步到后端</p>
-                      )}
                     </div>
 
                     <div className="flex flex-col gap-2">
@@ -532,22 +565,74 @@ export default function ExperimentSettings() {
             })}
           </div>
 
-          <div className="glass-card p-6 bg-blue-50/50">
-            <h3 className="text-lg font-bold text-slate-800 mb-3">使用说明</h3>
-            <div className="space-y-2 text-sm text-slate-700">
-              <p>1. <strong>数据库服务器</strong>必须最先启动，这是所有服务的基础</p>
-              <p>2. <strong>社交平台模拟</strong>在数据库服务启动后启动</p>
-              <p>3. <strong>舆论平衡系统</strong>仅在场景4中需要，且需要在社交平台启动前开启</p>
-              <p>4. 舆论平衡系统需要配置梯子才能正常工作</p>
-              <p>5. 不使用舆论平衡系统时请及时关闭以节省资源</p>
-              <p className="text-red-600 font-medium mt-3">⚠️ 如果服务无法启动或出现端口占用错误，请点击右上角的清理所有服务按钮</p>
-            </div>
-          </div>
         </>
       )}
 
 
+      {attackModeDialogOpen && (
+        <AttackModeDialog
+          onSelect={handleSelectAttackMode}
+          onClose={() => setAttackModeDialogOpen(false)}
+        />
+      )}
     </div>
+  )
+}
+
+function AttackModeDialog({
+  onSelect,
+  onClose,
+}: {
+  onSelect: (mode: AttackMode) => void
+  onClose: () => void
+}) {
+  if (typeof document === 'undefined') return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] bg-slate-700/22 backdrop-blur-[2px] flex items-start justify-center pt-10 px-6 pb-6">
+      <div className="w-full max-w-3xl rounded-3xl border border-slate-200/85 bg-gradient-to-br from-slate-100/97 via-slate-50/96 to-blue-50/94 shadow-[0_28px_90px_rgba(15,23,42,0.18)] p-10">
+        <h3 className="text-3xl font-bold text-slate-800">选择恶意攻击模式</h3>
+        <p className="text-base text-slate-600 mt-2">请选择本次开启时使用的攻击协同模式。</p>
+
+        <div className="mt-6 grid grid-cols-1 gap-4">
+          <button
+            type="button"
+            onClick={() => onSelect('swarm')}
+            className="w-full text-left rounded-2xl border border-slate-200/90 bg-white/72 p-5 hover:border-blue-300 hover:bg-white/92 transition-all duration-200 hover:shadow-lg"
+          >
+            <div className="font-semibold text-xl text-slate-800">蜂群式</div>
+            <div className="text-sm text-slate-600 mt-1">集中攻击同一目标，放大互动信号。</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelect('dispersed')}
+            className="w-full text-left rounded-2xl border border-slate-200/90 bg-white/72 p-5 hover:border-blue-300 hover:bg-white/92 transition-all duration-200 hover:shadow-lg"
+          >
+            <div className="font-semibold text-xl text-slate-800">游离式</div>
+            <div className="text-sm text-slate-600 mt-1">分散到多条帖子，降低集中痕迹。</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelect('chain')}
+            className="w-full text-left rounded-2xl border border-slate-200/90 bg-white/72 p-5 hover:border-blue-300 hover:bg-white/92 transition-all duration-200 hover:shadow-lg"
+          >
+            <div className="font-semibold text-xl text-slate-800">链式传播</div>
+            <div className="text-sm text-slate-600 mt-1">主导账号→扩散账号→控评账号的三层协同攻击。</div>
+          </button>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
   )
 }
 
