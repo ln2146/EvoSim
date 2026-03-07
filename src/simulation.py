@@ -33,6 +33,7 @@ from moderation import ModerationService, ModerationConfig, load_config_from_env
 
 # Snapshot system
 from snapshot_manager import create_snapshot_manager
+from snapshot_session import get_session_tick_number
 
 
 class Simulation:
@@ -42,6 +43,7 @@ class Simulation:
     def __init__(self, config: dict):
         self.config = config  # Store the entire config dictionary
         self.reset_db = config.get('reset_db', True)
+        self.restore_from_snapshot = bool(config.get('restore_from_snapshot', False))
         self.num_users = config['num_users']
         self.engine = resolve_engine(config)
         self.generate_own_post = config.get('generate_own_post', True)  # New parameter with default True
@@ -67,7 +69,11 @@ class Simulation:
         self.snapshot_enabled = config.get('snapshot_enabled', True)  # 默认启用快照
 
         # Replace user management with UserManager
-        self.user_manager = UserManager(config, self.db_manager)
+        self.user_manager = UserManager(
+            config,
+            self.db_manager,
+            restore_existing=self.restore_from_snapshot,
+        )
         self.users = self.user_manager.users
 
         # Initialize posts list
@@ -81,8 +87,9 @@ class Simulation:
 
         # Simplified user selection logic - rely directly on the user manager
 
-        # Create initial follows
-        self.user_manager.create_initial_follows()
+        # Create initial follows only for fresh runs. Restored snapshots already contain network state.
+        if not self.restore_from_snapshot:
+            self.user_manager.create_initial_follows()
 
         # Initialize the OpenAI client using MultiModelSelector for 502 error prevention
         try:
@@ -559,8 +566,11 @@ class Simulation:
                     # 普通用户 = 总用户 - 领袖 - 恶意
                     normal_users = total_users - leader_users - malicious_users
 
+                    absolute_tick = step + 1
+                    snapshot_tick = get_session_tick_number(start_tick, absolute_tick)
                     additional_info = {
-                        "tick": step + 1,
+                        "tick": snapshot_tick,
+                        "absolute_tick": absolute_tick,
                         "timestamp": datetime.now().isoformat(),
                         "user_count": total_users,
                         "post_count": current_post_count,
@@ -569,9 +579,9 @@ class Simulation:
                         "malicious_users": malicious_users,
                         "amplifier_users": amplifier_users
                     }
-                    self.snapshot_manager.save_tick_snapshot(step + 1, additional_info)
+                    self.snapshot_manager.save_tick_snapshot(snapshot_tick, additional_info)
                 except Exception as e:
-                    logging.warning(f"Failed to save snapshot for tick {step + 1}: {e}")
+                    logging.warning(f"Failed to save snapshot for tick {snapshot_tick}: {e}")
 
             logging.info("")  # Add a newline for readability between time steps
 

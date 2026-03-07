@@ -347,7 +347,7 @@ class ProcessManager:
         """
         try:
             # 如果指定了快照恢复，先恢复数据库
-            if snapshot_id and start_tick and SNAPSHOT_MANAGER_AVAILABLE:
+            if snapshot_id and start_tick is not None and SNAPSHOT_MANAGER_AVAILABLE:
                 snapshot_manager = _get_snapshot_manager()
                 restored_path = snapshot_manager.restore_from_tick(start_tick, snapshot_id)
                 if not restored_path:
@@ -421,9 +421,10 @@ class ProcessManager:
 
                 # 如果从快照恢复，设置起始 tick 环境变量
                 env_vars = {}
-                if start_tick and start_tick > 1:
+                if snapshot_id and start_tick is not None:
                     env_vars['START_TICK'] = str(start_tick)
                     env_vars['RESET_DB'] = 'false'
+                    env_vars['PARENT_SESSION_ID'] = snapshot_id
                     print(f"📌 设置起始 tick: {start_tick}")
 
                 self._start_process_in_terminal(
@@ -3293,7 +3294,7 @@ def start_dynamic_demo():
         start_tick = data.get('start_tick')  # 新增：起始 tick
 
         # 如果指定了快照恢复，先恢复数据库
-        if snapshot_id and start_tick:
+        if snapshot_id and start_tick is not None:
             if not SNAPSHOT_MANAGER_AVAILABLE:
                 return jsonify({
                     'success': False,
@@ -3309,13 +3310,13 @@ def start_dynamic_demo():
                     'message': f'从快照 {snapshot_id} 的 tick {start_tick} 恢复失败'
                 }), 500
 
-        # 调用 process_manager.start_demo()，传递预置标志和恢复参数
+        # 调用 process_manager.start_demo()，传递父置标志、恢复参数
         result = process_manager.start_demo(
             conda_env=conda_env,
             enable_attack=enable_attack,
             enable_aftercare=enable_aftercare,
             snapshot_id=snapshot_id,
-            start_tick=start_tick
+            start_tick=start_tick,
         )
 
         # 返回 JSON 响应

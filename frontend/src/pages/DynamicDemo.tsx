@@ -22,11 +22,12 @@ import { buildStageStepperModel } from '../lib/interventionFlow/stageStepper'
 import { getLiveBadgeClassName, getStageHeaderContainerClassName, getStageHeaderTextClassName, getStageSegmentClassName } from '../lib/interventionFlow/detailHeaderLayout'
 import { getDynamicDemoGridClassName } from '../lib/interventionFlow/pageGridLayout'
 import { createTimestampSmoothLineQueue } from '../lib/interventionFlow/logRenderQueue'
+import { startDynamicDemoWithPreset } from '../lib/dynamicDemo/startDemo'
 import { useLeaderboard } from '../hooks/useLeaderboard'
 import { usePostDetail } from '../hooks/usePostDetail'
 import { usePostComments } from '../hooks/usePostComments'
 import { usePostAnalysis } from '../hooks/usePostAnalysis'
-import { setAttackMode as setAttackModeApi, setModerationFlag, setAttackFlag, setAftercareFlag, detectFactions, getPostFactions, getSavedSnapshots, type FactionReport, type PostFactionsSummary } from '../services/api'
+import { setModerationFlag, setAttackFlag, setAftercareFlag, detectFactions, getPostFactions, getSavedSnapshots, type FactionReport, type PostFactionsSummary } from '../services/api'
 import { getAttackModeLabel, resolveAttackToggleAction, type AttackMode } from '../lib/attackModeToggle'
 import SaveSnapshotDialog from '../components/SaveSnapshotDialog'
 import SnapshotSelectDialog from '../components/SnapshotSelectDialog'
@@ -574,37 +575,17 @@ export default function DynamicDemo() {
     setIsStarting(true)
 
     try {
-      // 启动前将内容审核开关写入配置文件，确保 main.py 读到正确的初始值
-      await fetch('/api/config/moderation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content_moderation: enableModeration }),
-      }).catch(() => {})
-
-      // 调用后端 API 启动进程，传递预置标志和快照信息
-      const response = await fetch('/api/dynamic/start', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          enable_attack: enableAttack,
-          enable_aftercare: enableAftercare,
-          snapshot_id: snapshotId,
-          start_tick: startTick,
-        }),
+      const data = await startDynamicDemoWithPreset({
+        enableAttack,
+        attackMode,
+        enableAftercare,
+        enableModeration,
+        enableEvoCorps,
+        snapshotId,
+        startTick,
       })
 
-      const data = await response.json()
-
       if (data.success) {
-        // 捕获用户预置的标志（在 setIsRunning 前快照，避免轮询覆盖）
-        const preAttack = enableAttack
-        const preAttackMode = attackMode
-        const preAftercare = enableAftercare
-        const preModeration = enableModeration
-        const preEvoCorps = enableEvoCorps
-
         // 成功：设置 isRunning 状态，连接 SSE
         setIsRunning(true)
         sse.connect()
@@ -620,29 +601,6 @@ export default function DynamicDemo() {
         // 3. 刷新热度榜数据
         await refetchLeaderboard()
 
-        // 4. 延迟同步预置标志到后端（等待控制服务器完全启动）
-        setTimeout(async () => {
-          const syncs: Array<Promise<unknown>> = []
-          if (preAttack) {
-            if (preAttackMode) {
-              syncs.push(setAttackModeApi(preAttackMode).catch(() => {}))
-            }
-            syncs.push(setAttackFlag(true).catch(() => {}))
-          }
-          if (!preAftercare) {
-            syncs.push(setAftercareFlag(false).catch(() => {}))
-          }
-          if (preModeration) {
-            syncs.push(setModerationFlag(true).catch(() => {}))
-          }
-          await Promise.allSettled(syncs)
-          if (preEvoCorps) {
-            await fetch('/api/dynamic/opinion-balance/start', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({}),
-            }).catch(() => {})
-          }
-        }, 3000)
       } else {
         // 失败：显示错误消息
         alert(`启动失败：${data.message || '未知错误'}`)

@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import { Server, Settings, Play, Square, Shield, Save, Bug, Sparkles, Eye } from 'lucide-react'
 import axios from 'axios'
 import { setAttackFlag, setAttackMode, setAftercareFlag, setModerationFlag, saveSnapshot, getSavedSnapshots } from '../services/api'
 import { resolveAttackToggleAction, getAttackModeLabel, type AttackMode } from '../lib/attackModeToggle'
+import { startDynamicDemoWithPreset } from '../lib/dynamicDemo/startDemo'
+import { useSimulation } from '../contexts/SimulationContext'
 import SaveSnapshotDialog from '../components/SaveSnapshotDialog'
 import SnapshotSelectDialog from '../components/SnapshotSelectDialog'
 
@@ -23,6 +26,8 @@ interface ExperimentConfig {
 }
 
 export default function ExperimentSettings() {
+  const navigate = useNavigate()
+  const simulation = useSimulation()
   const [activeTab, setActiveTab] = useState<'service' | 'config'>('config')
   
   // 服务管理状态
@@ -149,50 +154,29 @@ export default function ExperimentSettings() {
   const handleStartDemo = async (snapshotId?: string, startTick?: number) => {
     if (isRunning || isStarting) return
     setIsStarting(true)
+    simulation.setIsStarting(true)
     try {
-      // 启动前将内容审核开关写入配置文件
-      await fetch('/api/config/moderation', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content_moderation: enableModeration }),
-      }).catch(() => {})
-
-      const response = await fetch('/api/dynamic/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enable_attack: enableAttack,
-          enable_aftercare: enableAftercare,
-          snapshot_id: snapshotId,
-          start_tick: startTick,
-        }),
+      const data = await startDynamicDemoWithPreset({
+        enableAttack,
+        attackMode,
+        enableAftercare,
+        enableModeration,
+        enableEvoCorps,
+        snapshotId,
+        startTick,
       })
-      const data = await response.json()
 
       if (data.success) {
-        // 延迟同步预置标志到后端
-        const preAttack = enableAttack
-        const preAttackMode = attackMode
-        const preAftercare = enableAftercare
-        const preMod = enableModeration
-        const preEvo = enableEvoCorps
-
-        setTimeout(async () => {
-          const syncs: Array<Promise<unknown>> = []
-          if (preAttack) {
-            if (preAttackMode) syncs.push(setAttackMode(preAttackMode).catch(() => {}))
-            syncs.push(setAttackFlag(true).catch(() => {}))
-          }
-          if (!preAftercare) syncs.push(setAftercareFlag(false).catch(() => {}))
-          if (preMod) syncs.push(setModerationFlag(true).catch(() => {}))
-          await Promise.allSettled(syncs)
-          if (preEvo) {
-            await fetch('/api/dynamic/opinion-balance/start', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({}),
-            }).catch(() => {})
-          }
-        }, 3000)
+        setStatus(prev => ({ ...prev, database: 'running', platform: 'running' }))
+        simulation.setIsRunning(true)
+        simulation.setDatabaseRunning(true)
+        simulation.setMainRunning(true)
+        simulation.setEnableAttack(enableAttack)
+        simulation.setAttackMode(attackMode)
+        simulation.setEnableAftercare(enableAftercare)
+        simulation.setEnableModeration(enableModeration)
+        simulation.setEnableEvoCorps(enableEvoCorps)
+        navigate('/dynamic')
       } else {
         alert(`启动失败：${data.message || '未知错误'}`)
       }
@@ -200,6 +184,7 @@ export default function ExperimentSettings() {
       alert(`启动失败：${error instanceof Error ? error.message : '网络错误'}`)
     } finally {
       setIsStarting(false)
+      simulation.setIsStarting(false)
     }
   }
 
@@ -739,4 +724,3 @@ function AttackModeDialog({
     document.body
   )
 }
-

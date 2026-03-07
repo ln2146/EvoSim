@@ -779,6 +779,29 @@ if __name__ == "__main__":
     start_tick = int(start_tick_env) if start_tick_env.isdigit() else 1
     reset_db = reset_db_env.lower() != 'false'
 
+    # 如果从快照恢复但没有通过环境变量传递 parent session，自动查找
+    if start_tick > 1 and not parent_session_id:
+        try:
+            project_root = os.path.dirname(os.path.dirname(__file__))
+            snapshots_dir = os.path.join(project_root, "snapshots")
+            if os.path.exists(snapshots_dir):
+                best_session = None
+                best_time = ""
+                for sid in os.listdir(snapshots_dir):
+                    session_dir = os.path.join(snapshots_dir, sid)
+                    if not os.path.isdir(session_dir):
+                        continue
+                    tick_dir = os.path.join(session_dir, f"tick_{start_tick}")
+                    if os.path.isdir(tick_dir):
+                        if sid > best_time:
+                            best_time = sid
+                            best_session = sid
+                if best_session:
+                    parent_session_id = best_session
+                    print(f"📌 自动检测到父快照会话: {parent_session_id}")
+        except Exception as e:
+            print(f"⚠️ 自动检测父快照失败: {e}")
+
     if start_tick > 1:
         print(f"📌 从快照恢复: 起始 tick = {start_tick}")
         print(f"📌 数据库重置: {'是' if reset_db else '否'}")
@@ -816,6 +839,8 @@ if __name__ == "__main__":
         config = json.load(file)
 
     apply_selector_engine(config)
+    config['reset_db'] = reset_db
+    config['restore_from_snapshot'] = bool(parent_session_id)
 
     # Reset simulation database before each run (unless restoring from snapshot)
     from database_manager import DatabaseManager

@@ -78,9 +78,9 @@ class NewsManager:
         
         news_agent_id = "agentverse_news"
         
-        # Register news agent in database
+        # Register news agent in database (skip if already exists, e.g. restored from snapshot)
         self.conn.execute('''
-            INSERT INTO users (
+            INSERT OR IGNORE INTO users (
                 user_id, persona, creation_time
             )
             VALUES (?, ?, datetime('now'))

@@ -8,16 +8,61 @@ import time
 import os
 from database_manager import DatabaseManager
 class UserManager:
-    def __init__(self, config: dict, db_manager: DatabaseManager):
+    def __init__(self, config: dict, db_manager: DatabaseManager, restore_existing: bool = False):
         self.experiment_config = config
         self.num_users = config['num_users']
         self.db_manager = db_manager
         self.conn = db_manager.get_connection()
+        self.restore_existing = restore_existing
         # Simplified user selection mechanism
         self.current_user_index = 0
         self.all_user_configs = None
         self.used_configs = set()  # Maintain compatibility
-        self.users = self.create_users()
+        self.users = self.load_users_from_database() if restore_existing else self.create_users()
+
+    def load_users_from_database(self):
+        """Recreate AgentUser instances from the restored database."""
+        users = []
+
+        try:
+            cursor = self.conn.execute(
+                '''
+                SELECT user_id, persona, background_labels
+                FROM users
+                ORDER BY user_id ASC
+                '''
+            )
+            rows = cursor.fetchall()
+
+            for row in rows:
+                background_labels = row[2]
+                if isinstance(background_labels, str):
+                    try:
+                        background_labels = json.loads(background_labels)
+                    except json.JSONDecodeError:
+                        background_labels = {}
+                elif background_labels is None:
+                    background_labels = {}
+
+                user_config = {
+                    'persona': row[1],
+                    'background_labels': background_labels,
+                }
+                users.append(
+                    AgentUser(
+                        user_id=row[0],
+                        user_config=user_config,
+                        temperature=self.experiment_config['temperature'],
+                        experiment_config=self.experiment_config,
+                        db_connection=self.db_manager.get_connection()
+                    )
+                )
+
+            logging.info(f"Loaded {len(users)} users from restored database")
+            return users
+        except Exception as e:
+            logging.error(f"Error loading users from restored database: {str(e)}")
+            raise
         
     def load_agent_configs(self):
         """Load agent configurations either from a JSONL file or generate them dynamically."""
