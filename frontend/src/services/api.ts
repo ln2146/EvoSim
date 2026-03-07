@@ -709,3 +709,25 @@ export const restoreSnapshot = async (tick: number): Promise<{ success: boolean 
     return { success: false }
   }
 }
+
+// 删除指定快照
+export const deleteSnapshot = async (sessionId: string): Promise<{ success: boolean; message: string }> => {
+  try {
+    const response = await api.delete(`/snapshots/${sessionId}`)
+    return response.data
+  } catch (error) {
+    console.error('Failed to delete snapshot:', error)
+    return { success: false, message: '删除失败' }
+  }
+}
+
+// 删除所有快照
+export const deleteAllSnapshots = async (): Promise<{ success: boolean; message: string; deleted_count: number }> => {
+  try {
+    const response = await api.delete('/snapshots/all')
+    return response.data
+  } catch (error) {
+    console.error('Failed to delete all snapshots:', error)
+    return { success: false, message: '删除失败', deleted_count: 0 }
+  }
+}

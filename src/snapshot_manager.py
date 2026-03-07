@@ -682,6 +682,102 @@ class SnapshotManager:
             "ticks": {}
         }
 
+    def delete_snapshot(self, session_id: str) -> Dict[str, Any]:
+        """
+        删除指定的快照会话
+
+        Args:
+            session_id: 要删除的会话ID
+
+        Returns:
+            删除结果，包含 success, message
+        """
+        try:
+            session_dir = os.path.join(self.snapshots_dir, session_id)
+
+            if not os.path.exists(session_dir):
+                logger.error(f"❌ 快照不存在: {session_id}")
+                return {
+                    "success": False,
+                    "message": f"快照不存在: {session_id}"
+                }
+
+            # 删除整个会话目录
+            shutil.rmtree(session_dir)
+            logger.info(f"🗑️ 已删除快照会话: {session_id}")
+
+            # 更新全局元数据，移除该会话的记录
+            metadata = self._load_metadata()
+            if "ticks" in metadata:
+                # 移除属于该会话的 tick 记录
+                ticks_to_remove = [
+                    tick_str for tick_str, tick_info in metadata.get("ticks", {}).items()
+                    if tick_info.get("session_id") == session_id
+                ]
+                for tick_str in ticks_to_remove:
+                    del metadata["ticks"][tick_str]
+
+            # 如果删除的是当前会话，清除 session_id
+            if self.session_id == session_id:
+                self.session_id = None
+
+            self._save_metadata(metadata)
+
+            return {
+                "success": True,
+                "message": f"快照 '{session_id}' 已删除"
+            }
+
+        except Exception as e:
+            logger.error(f"❌ 删除快照失败: {e}")
+            return {
+                "success": False,
+                "message": f"删除失败: {str(e)}"
+            }
+
+    def delete_all_snapshots(self) -> Dict[str, Any]:
+        """
+        删除所有快照
+
+        Returns:
+            删除结果，包含 success, message, deleted_count
+        """
+        try:
+            sessions = self.list_sessions()
+            deleted_count = 0
+
+            for session in sessions:
+                session_id = session.get("session_id")
+                session_dir = os.path.join(self.snapshots_dir, session_id)
+
+                if os.path.exists(session_dir):
+                    shutil.rmtree(session_dir)
+                    deleted_count += 1
+                    logger.info(f"🗑️ 已删除快照会话: {session_id}")
+
+            # 清空全局元数据
+            metadata = {
+                "session_id": None,
+                "created_at": datetime.now().isoformat(),
+                "ticks": {}
+            }
+            self._save_metadata(metadata)
+            self.session_id = None
+
+            return {
+                "success": True,
+                "message": f"已删除 {deleted_count} 个快照",
+                "deleted_count": deleted_count
+            }
+
+        except Exception as e:
+            logger.error(f"❌ 删除所有快照失败: {e}")
+            return {
+                "success": False,
+                "message": f"删除失败: {str(e)}",
+                "deleted_count": 0
+            }
+
 
 def create_snapshot_manager(project_root: str, simulation_db_path: str) -> SnapshotManager:
     """

@@ -4886,6 +4886,79 @@ def get_snapshot_detail(session_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/snapshots/<session_id>', methods=['DELETE'])
+def delete_snapshot(session_id):
+    """删除指定的快照
+
+    路径参数:
+        session_id: 要删除的快照会话ID
+
+    响应:
+        {
+            "success": true/false,
+            "message": "消息"
+        }
+    """
+    try:
+        if not SNAPSHOT_MANAGER_AVAILABLE:
+            return jsonify({
+                'success': False,
+                'message': '快照管理器不可用'
+            }), 500
+
+        snapshot_manager = _get_snapshot_manager()
+        result = snapshot_manager.delete_snapshot(session_id)
+
+        if result['success']:
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': f'删除快照失败: {str(e)}'
+        }), 500
+
+
+@app.route('/api/snapshots/all', methods=['DELETE'])
+def delete_all_snapshots():
+    """删除所有快照
+
+    响应:
+        {
+            "success": true/false,
+            "message": "消息",
+            "deleted_count": 删除数量
+        }
+    """
+    try:
+        if not SNAPSHOT_MANAGER_AVAILABLE:
+            return jsonify({
+                'success': False,
+                'message': '快照管理器不可用'
+            }), 500
+
+        snapshot_manager = _get_snapshot_manager()
+        result = snapshot_manager.delete_all_snapshots()
+
+        if result['success']:
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': f'删除所有快照失败: {str(e)}',
+            'deleted_count': 0
+        }), 500
+
+
 if __name__ == '__main__':
     import sys
     # Allow port to be specified via command line
