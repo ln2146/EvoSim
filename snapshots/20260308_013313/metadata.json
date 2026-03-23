@@ -1,0 +1,26 @@
+{
+  "session_id": "20260308_013313",
+  "created_at": "2026-03-08T01:33:13.838046",
+  "ticks": {
+    "3": {
+      "tick": 3,
+      "timestamp": "2026-03-08T01:35:22.805730",
+      "db_path": "C:\\Users\\21462\\Desktop\\new\\EvoCorps\\snapshots\\20260308_013313\\tick_3\\simulation.db",
+      "info_file": "C:\\Users\\21462\\Desktop\\new\\EvoCorps\\snapshots\\20260308_013313\\tick_3\\info.json"
+    },
+    "4": {
+      "tick": 4,
+      "timestamp": "2026-03-08T01:36:59.919176",
+      "db_path": "C:\\Users\\21462\\Desktop\\new\\EvoCorps\\snapshots\\20260308_013313\\tick_4\\simulation.db",
+      "info_file": "C:\\Users\\21462\\Desktop\\new\\EvoCorps\\snapshots\\20260308_013313\\tick_4\\info.json"
+    },
+    "5": {
+      "tick": 5,
+      "timestamp": "2026-03-08T01:38:51.193071",
+      "db_path": "C:\\Users\\21462\\Desktop\\new\\EvoCorps\\snapshots\\20260308_013313\\tick_5\\simulation.db",
+      "info_file": "C:\\Users\\21462\\Desktop\\new\\EvoCorps\\snapshots\\20260308_013313\\tick_5\\info.json"
+    }
+  },
+  "parent_session_id": "20260307_213703",
+  "parent_tick": 3
+}
